@@ -1,0 +1,93 @@
+{
+  "project_endpoint": "https://aif66lhnuec.services.ai.azure.com/api/projects/proj-fsi-demo",
+  "agents": [
+    {
+      "name": "fsi-three-statement-agent",
+      "version": "1",
+      "model": "gpt-5.1",
+      "scenario": "equity-research",
+      "role": "specialist",
+      "skill_file": "three-statement-agent.md"
+    },
+    {
+      "name": "fsi-dcf-agent",
+      "version": "1",
+      "model": "gpt-5.1",
+      "scenario": "equity-research",
+      "role": "specialist",
+      "skill_file": "dcf-agent.md"
+    },
+    {
+      "name": "fsi-comps-agent",
+      "version": "1",
+      "model": "gpt-5.1",
+      "scenario": "equity-research",
+      "role": "specialist",
+      "skill_file": "comps-agent.md"
+    },
+    {
+      "name": "fsi-competitive-analysis-agent",
+      "version": "1",
+      "model": "gpt-5.1",
+      "scenario": "ib-pitch",
+      "role": "specialist",
+      "skill_file": "competitive-analysis-agent.md"
+    },
+    {
+      "name": "fsi-pptx-author-agent",
+      "version": "1",
+      "model": "gpt-5.1",
+      "scenario": "ib-pitch",
+      "role": "specialist",
+      "skill_file": "pptx-author-agent.md"
+    },
+    {
+      "name": "fsi-deck-qc-agent",
+      "version": "1",
+      "model": "gpt-5.4-mini",
+      "scenario": "ib-pitch",
+      "role": "specialist",
+      "skill_file": "deck-qc-agent.md"
+    },
+    {
+      "name": "fsi-lbo-agent",
+      "version": "1",
+      "model": "gpt-5.1",
+      "scenario": "pe-lbo",
+      "role": "specialist",
+      "skill_file": "lbo-agent.md"
+    },
+    {
+      "name": "fsi-model-audit-agent",
+      "version": "1",
+      "model": "gpt-5.4-mini",
+      "scenario": "pe-lbo",
+      "role": "specialist",
+      "skill_file": "model-audit-agent.md"
+    },
+    {
+      "name": "fsi-orchestrator-equity-research",
+      "version": "1",
+      "model": "gpt-5.1",
+      "scenario": "equity-research",
+      "role": "orchestrator",
+      "skill_file": "_orchestrator-equity-research.md"
+    },
+    {
+      "name": "fsi-orchestrator-ib-pitch",
+      "version": "1",
+      "model": "gpt-5.1",
+      "scenario": "ib-pitch",
+      "role": "orchestrator",
+      "skill_file": "_orchestrator-ib-pitch.md"
+    },
+    {
+      "name": "fsi-orchestrator-pe-lbo",
+      "version": "1",
+      "model": "gpt-5.1",
+      "scenario": "pe-lbo",
+      "role": "orchestrator",
+      "skill_file": "_orchestrator-pe-lbo.md"
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+{
+  "dataset_label": "SYNTHETIC / FICTIONAL DATA - FOR DEMONSTRATION ONLY",
+  "currency": "USD",
+  "companies": [
+    {
+      "ticker": "NGTX",
+      "name": "NovaGrid Technologies",
+      "sector": "Industrials",
+      "sub_industry": "Industrial IoT & Smart Energy Systems",
+      "description": "Fictional mid-cap provider of grid-edge sensors, industrial connectivity gateways, and analytics software for utilities and energy-intensive industrial customers.",
+      "hq_country": "United States",
+      "employees": 8200,
+      "founded_year": 2008
+    },
+    {
+      "ticker": "VEDG",
+      "name": "VoltEdge Automation",
+      "sector": "Industrials",
+      "sub_industry": "Grid Automation Hardware",
+      "description": "Fictional manufacturer of substation automation controllers, protection relays, and grid orchestration appliances.",
+      "hq_country": "United States",
+      "employees": 11600,
+      "founded_year": 1997
+    },
+    {
+      "ticker": "HMTR",
+      "name": "HelioMetric Systems",
+      "sector": "Information Technology",
+      "sub_industry": "Energy Monitoring Software",
+      "description": "Fictional software company offering cloud-based metering, asset performance, and renewable generation monitoring tools.",
+      "hq_country": "Canada",
+      "employees": 5400,
+      "founded_year": 2011
+    },
+    {
+      "ticker": "GSAN",
+      "name": "GridSense Analytics",
+      "sector": "Information Technology",
+      "sub_industry": "AI Grid Analytics",
+      "description": "Fictional analytics platform using synthetic load, outage, and equipment telemetry to optimize distribution networks.",
+      "hq_country": "United Kingdom",
+      "employees": 4300,
+      "founded_year": 2014
+    },
+    {
+      "ticker": "TFXC",
+      "name": "TerraFlux Controls",
+      "sector": "Industrials",
+      "sub_industry": "Industrial Controls & Sensors",
+      "description": "Fictional industrial controls supplier focused on factory energy management, motion control, and ruggedized sensing modules.",
+      "hq_country": "Germany",
+      "employees": 7100,
+      "founded_year": 1992
+    },
+    {
+      "ticker": "OWES",
+      "name": "OrionWave Energy Systems",
+      "sector": "Industrials",
+      "sub_industry": "Distributed Energy Equipment",
+      "description": "Fictional provider of distributed energy resource management equipment, inverters, and microgrid integration services.",
+      "hq_country": "Japan",
+      "employees": 13200,
+      "founded_year": 1988
+    },
+    {
+      "ticker": "KLOP",
+      "name": "KineticLoop Industrials",
+      "sector": "Industrials",
+      "sub_industry": "Predictive Maintenance Hardware",
+      "description": "Fictional producer of vibration monitoring, thermal imaging, and industrial predictive-maintenance edge devices.",
+      "hq_country": "Netherlands",
+      "employees": 4900,
+      "founded_year": 2003
+    }
+  ]
+}

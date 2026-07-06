@@ -1,0 +1,64 @@
+{
+  "dataset_label": "SYNTHETIC / FICTIONAL DATA - FOR DEMONSTRATION ONLY",
+  "as_of_date": "2026-07-06",
+  "currency": "USD millions except percentages and multiples",
+  "macro_environment": {
+    "central_bank_policy_rate_percent": 4.25,
+    "ten_year_government_yield_percent": 3.75,
+    "investment_grade_spread_bps": 135,
+    "high_yield_spread_bps": 420,
+    "industrial_production_growth_percent": 2.2,
+    "inflation_rate_percent": 2.8
+  },
+  "sector_datapoints": {
+    "industrial_iot_market_growth_percent": 8.5,
+    "smart_grid_capex_growth_percent": 7.8,
+    "utility_digitization_budget_growth_percent": 9.1,
+    "typical_public_ev_ebitda_range": "8.5x-13.0x",
+    "typical_lbo_debt_capacity_range": "3.5x-5.0x LTM EBITDA"
+  },
+  "fictional_recent_ma_transactions": [
+    {
+      "announcement_date": "2025-03-18",
+      "buyer": "ArcLight Grid Holdings",
+      "target": "RelayWorks Automation",
+      "target_description": "Fictional substation automation platform",
+      "enterprise_value": 2480.0,
+      "ltm_ebitda": 255.0,
+      "ev_ebitda_multiple": 9.7
+    },
+    {
+      "announcement_date": "2025-08-07",
+      "buyer": "Northstar Industrial Partners",
+      "target": "SignalForge Sensors",
+      "target_description": "Fictional industrial sensor and edge telemetry vendor",
+      "enterprise_value": 1325.0,
+      "ltm_ebitda": 132.5,
+      "ev_ebitda_multiple": 10.0
+    },
+    {
+      "announcement_date": "2026-01-22",
+      "buyer": "VoltEdge Automation",
+      "target": "GridPilot Software",
+      "target_description": "Fictional DERMS and grid orchestration software provider",
+      "enterprise_value": 1760.0,
+      "ltm_ebitda": 146.7,
+      "ev_ebitda_multiple": 12.0
+    },
+    {
+      "announcement_date": "2026-05-11",
+      "buyer": "AtlasBridge Capital",
+      "target": "EcoMeter Networks",
+      "target_description": "Fictional advanced metering analytics company",
+      "enterprise_value": 920.0,
+      "ltm_ebitda": 95.8,
+      "ev_ebitda_multiple": 9.6
+    }
+  ],
+  "pitch_narrative_themes": [
+    "Utilities are accelerating grid-edge modernization to manage distributed energy resources.",
+    "Industrial customers are prioritizing energy-efficiency software with measurable payback periods.",
+    "Higher rates have compressed leverage capacity, increasing focus on resilient free cash flow and margin expansion.",
+    "Scarcity value remains high for scaled platforms combining hardware telemetry, proprietary data, and recurring analytics revenue."
+  ]
+}

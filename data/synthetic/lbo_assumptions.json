@@ -1,0 +1,81 @@
+{
+  "dataset_label": "SYNTHETIC / FICTIONAL DATA - FOR DEMONSTRATION ONLY",
+  "target": "NovaGrid Technologies",
+  "ticker": "NGTX",
+  "currency": "USD millions except percentages and multiples",
+  "entry_ev_ebitda_multiple": 9.25,
+  "entry_ebitda": 722.6,
+  "purchase_price_enterprise_value": 6684.1,
+  "transaction_fees": 135.0,
+  "total_sources_required": 6819.1,
+  "debt_tranches": [
+    {
+      "tranche": "Revolver",
+      "committed_amount": 150.0,
+      "drawn_at_close": 0.0,
+      "interest_rate_percent": 7.0,
+      "maturity_years": 5
+    },
+    {
+      "tranche": "Term Loan A",
+      "amount": 900.0,
+      "interest_rate_percent": 6.75,
+      "maturity_years": 5,
+      "amortization_percent_per_year": 5.0
+    },
+    {
+      "tranche": "Term Loan B",
+      "amount": 1600.0,
+      "interest_rate_percent": 7.25,
+      "maturity_years": 7,
+      "amortization_percent_per_year": 1.0
+    },
+    {
+      "tranche": "Subordinated Notes",
+      "amount": 650.0,
+      "interest_rate_percent": 10.5,
+      "maturity_years": 8,
+      "amortization_percent_per_year": 0.0
+    }
+  ],
+  "total_funded_debt_at_close": 3150.0,
+  "funded_debt_to_entry_ebitda": 4.36,
+  "sponsor_equity_contribution": 3669.1,
+  "equity_contribution_percent_of_total_sources": 53.8,
+  "operating_assumptions": {
+    "FY2026E": {
+      "revenue_growth_percent": 9.0,
+      "ebitda_growth_percent": 11.3,
+      "ebitda_margin_percent": 24.0,
+      "capex_percent_of_revenue": 5.0
+    },
+    "FY2027E": {
+      "revenue_growth_percent": 8.5,
+      "ebitda_growth_percent": 10.3,
+      "ebitda_margin_percent": 24.4,
+      "capex_percent_of_revenue": 4.9
+    },
+    "FY2028E": {
+      "revenue_growth_percent": 8.0,
+      "ebitda_growth_percent": 9.8,
+      "ebitda_margin_percent": 24.8,
+      "capex_percent_of_revenue": 4.8
+    },
+    "FY2029E": {
+      "revenue_growth_percent": 7.2,
+      "ebitda_growth_percent": 8.1,
+      "ebitda_margin_percent": 25.0,
+      "capex_percent_of_revenue": 4.7
+    },
+    "FY2030E": {
+      "revenue_growth_percent": 6.5,
+      "ebitda_growth_percent": 7.4,
+      "ebitda_margin_percent": 25.2,
+      "capex_percent_of_revenue": 4.6
+    }
+  },
+  "cash_sweep_percent_of_excess_cash_flow": 75.0,
+  "minimum_cash_balance": 125.0,
+  "exit_multiple_ev_ebitda": 9.0,
+  "exit_year": "FY2030E"
+}
