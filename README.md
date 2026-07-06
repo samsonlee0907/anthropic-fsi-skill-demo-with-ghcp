@@ -290,3 +290,5 @@ az group delete --name rg-fsi-demo --yes --no-wait
 ## More detail
 
 See [`docs/runbook.md`](docs/runbook.md) for the demo script, detailed operations notes, validation results, and gotchas captured during the build.
+
+For a standalone, print-friendly version of this overview, open [`docs/fsi-multi-agent-demo-report.html`](docs/fsi-multi-agent-demo-report.html).

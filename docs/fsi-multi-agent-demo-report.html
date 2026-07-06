@@ -1,0 +1,701 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FSI Multi-Agent Demo on Azure AI Foundry</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --ink: #172033;
+      --muted: #506078;
+      --line: #d8e0ec;
+      --brand: #155eef;
+      --brand-dark: #0d3d9c;
+      --accent: #007c89;
+      --foundry: #ede7ff;
+      --container: #e7f0ff;
+      --support: #e8f7f2;
+      --identity: #fff1d6;
+      --shadow: 0 18px 48px rgba(19, 35, 65, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", Arial, sans-serif;
+      line-height: 1.55;
+    }
+
+    a {
+      color: var(--brand-dark);
+      text-decoration-thickness: 0.08em;
+      text-underline-offset: 0.18em;
+    }
+
+    .page {
+      width: min(1180px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 40px 0 64px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, #0d2147 0%, #123d74 58%, #0e6871 100%);
+      color: #ffffff;
+      border-radius: 28px;
+      padding: clamp(32px, 5vw, 64px);
+      box-shadow: var(--shadow);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -80px -140px auto;
+      width: 360px;
+      height: 360px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    .kicker {
+      margin: 0 0 12px;
+      font-size: 0.92rem;
+      font-weight: 700;
+      color: #b9dcff;
+    }
+
+    h1, h2, h3 {
+      line-height: 1.08;
+      text-wrap: balance;
+    }
+
+    h1 {
+      max-width: 920px;
+      margin: 0;
+      font-size: clamp(2.4rem, 5vw, 4.8rem);
+      letter-spacing: -0.035em;
+    }
+
+    .hero p {
+      max-width: 760px;
+      margin: 20px 0 0;
+      color: #e9f3ff;
+      font-size: 1.12rem;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+      margin-top: 28px;
+      position: relative;
+      z-index: 1;
+    }
+
+    .meta-card {
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 16px;
+    }
+
+    .meta-card span {
+      display: block;
+      color: #c8ddf4;
+      font-size: 0.82rem;
+      margin-bottom: 4px;
+    }
+
+    .meta-card strong {
+      display: block;
+      color: #ffffff;
+      word-break: break-word;
+    }
+
+    section {
+      margin-top: 34px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: clamp(22px, 3vw, 34px);
+      box-shadow: 0 8px 28px rgba(19, 35, 65, 0.06);
+    }
+
+    h2 {
+      margin: 0 0 16px;
+      font-size: clamp(1.8rem, 3vw, 2.5rem);
+      letter-spacing: -0.025em;
+    }
+
+    h3 {
+      margin: 24px 0 10px;
+      font-size: 1.2rem;
+    }
+
+    p {
+      max-width: 78ch;
+      color: var(--muted);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      margin-top: 16px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+      background: #ffffff;
+    }
+
+    th, td {
+      padding: 14px 16px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      color: #24324a;
+      background: #eef3fb;
+      font-size: 0.9rem;
+    }
+
+    tr:last-child td {
+      border-bottom: 0;
+    }
+
+    code {
+      background: #eef3fb;
+      color: #14233c;
+      padding: 0.16em 0.34em;
+      border-radius: 6px;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      overflow-x: auto;
+      background: #101827;
+      color: #eff6ff;
+      padding: 18px;
+      border-radius: 16px;
+      font-size: 0.92rem;
+    }
+
+    .scenario-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .scenario {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 18px;
+      background: #fbfdff;
+    }
+
+    .scenario strong {
+      display: block;
+      color: var(--ink);
+      font-size: 1.08rem;
+      margin-bottom: 8px;
+    }
+
+    .tag {
+      display: inline-block;
+      border-radius: 999px;
+      background: #e7f0ff;
+      color: #123d74;
+      padding: 5px 10px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      margin-top: 10px;
+    }
+
+    .diagram {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: #fbfdff;
+      padding: 22px;
+      margin-top: 18px;
+      overflow-x: auto;
+    }
+
+    .flow-svg {
+      display: block;
+      min-width: 1040px;
+      width: 100%;
+      height: auto;
+    }
+
+    .node-title {
+      font: 700 16px "Segoe UI", Arial, sans-serif;
+      fill: #172033;
+    }
+
+    .node-sub {
+      font: 13px "Segoe UI", Arial, sans-serif;
+      fill: #506078;
+    }
+
+    .edge-label {
+      font: 12px "Segoe UI", Arial, sans-serif;
+      fill: #344258;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+    }
+
+    .steps {
+      counter-reset: step;
+      display: grid;
+      gap: 12px;
+      padding: 0;
+      margin: 16px 0 0;
+      list-style: none;
+    }
+
+    .steps li {
+      counter-increment: step;
+      display: grid;
+      grid-template-columns: 40px 1fr;
+      gap: 12px;
+      align-items: start;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 14px;
+      background: #fbfdff;
+      color: var(--muted);
+    }
+
+    .steps li::before {
+      content: counter(step);
+      display: grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      background: var(--brand);
+      color: #ffffff;
+      font-weight: 800;
+    }
+
+    .callout {
+      border: 1px solid #b7d5ff;
+      border-radius: 18px;
+      background: #eef6ff;
+      padding: 16px 18px;
+      margin-top: 16px;
+      color: #233954;
+    }
+
+    .footer {
+      margin: 28px 0 0;
+      color: var(--muted);
+      text-align: center;
+      font-size: 0.92rem;
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+      }
+
+      .page {
+        width: 100%;
+        padding: 0;
+      }
+
+      .hero,
+      section {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+
+      a {
+        color: #172033;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <p class="kicker">Azure AI Foundry Agent Service | Financial Services Industry demo</p>
+      <h1>FSI Multi-Agent Demo on Azure AI Foundry</h1>
+      <p>
+        A deployed multi-agent analyst workflow that adapts Anthropic's financial-analysis skill patterns
+        onto Azure AI Foundry prompt agents, Foundry toolboxes, Container Apps, and Application Insights.
+      </p>
+      <div class="meta-grid" aria-label="Live deployment endpoints">
+        <div class="meta-card">
+          <span>Portal</span>
+          <strong><a href="https://ca-portal-fsi-demo.orangecoast-891e69ba.eastus2.azurecontainerapps.io">ca-portal-fsi-demo</a></strong>
+        </div>
+        <div class="meta-card">
+          <span>API</span>
+          <strong><a href="https://ca-api-fsi-demo.orangecoast-891e69ba.eastus2.azurecontainerapps.io">ca-api-fsi-demo</a></strong>
+        </div>
+        <div class="meta-card">
+          <span>Resource group</span>
+          <strong>rg-fsi-demo / eastus2</strong>
+        </div>
+        <div class="meta-card">
+          <span>Foundry project</span>
+          <strong>proj-fsi-demo</strong>
+        </div>
+      </div>
+    </header>
+
+    <section>
+      <h2>Executive summary</h2>
+      <p>
+        The demo presents three visible FSI analyst scenarios in a Next.js portal. The portal streams each
+        multi-agent run from a FastAPI backend, which invokes Azure AI Foundry prompt agents through the
+        OpenAI-compatible responses API. Agents use Code Interpreter to produce real spreadsheet and
+        presentation artifacts and emit traces to Application Insights.
+      </p>
+      <div class="scenario-grid">
+        <article class="scenario">
+          <strong>Equity Research &amp; Valuation</strong>
+          <p>3-Statement Model -> DCF -> Trading Comps -> final synthesis.</p>
+          <span class="tag">Output: .xlsx valuation package</span>
+        </article>
+        <article class="scenario">
+          <strong>Investment Banking Pitch</strong>
+          <p>Competitive Analysis -> PPTX Author -> Deck QC -> final synthesis.</p>
+          <span class="tag">Output: .pptx pitch deck</span>
+        </article>
+        <article class="scenario">
+          <strong>Private Equity LBO Screening</strong>
+          <p>LBO Model -> Model Audit -> final synthesis.</p>
+          <span class="tag">Output: .xlsx LBO workbook</span>
+        </article>
+      </div>
+      <div class="callout">
+        All company data, peers, assumptions, and figures are synthetic for demonstration only. This report
+        and the generated artifacts are not investment advice.
+      </div>
+    </section>
+
+    <section>
+      <h2>Architecture flow</h2>
+      <p>
+        The diagram shows where each Azure service or Foundry feature is used during a scenario run.
+      </p>
+      <div class="diagram" role="img" aria-label="Azure architecture flow diagram">
+        <svg class="flow-svg" viewBox="0 0 1120 650" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+              <path d="M0,0 L0,6 L9,3 z" fill="#536176"/>
+            </marker>
+            <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%">
+              <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#132341" flood-opacity="0.12"/>
+            </filter>
+          </defs>
+
+          <rect x="24" y="30" width="220" height="104" rx="18" fill="#fff" stroke="#d8e0ec" filter="url(#softShadow)"/>
+          <text x="50" y="68" class="node-title">User browser</text>
+          <text x="50" y="94" class="node-sub">Demo audience opens portal</text>
+
+          <rect x="330" y="28" width="300" height="160" rx="22" fill="#e7f0ff" stroke="#b7caff" filter="url(#softShadow)"/>
+          <text x="356" y="64" class="node-title">Azure Container Apps</text>
+          <text x="356" y="92" class="node-sub">Portal: Next.js public HTTPS ingress</text>
+          <text x="356" y="118" class="node-sub">API: FastAPI orchestrator + SSE</text>
+          <text x="356" y="144" class="node-sub">Revisioned container deployments</text>
+
+          <rect x="720" y="28" width="320" height="160" rx="22" fill="#fff1d6" stroke="#f1cc7a" filter="url(#softShadow)"/>
+          <text x="746" y="64" class="node-title">Managed identity + RBAC</text>
+          <text x="746" y="92" class="node-sub">DefaultAzureCredential in API</text>
+          <text x="746" y="118" class="node-sub">Access to Foundry, ACR, Storage</text>
+          <text x="746" y="144" class="node-sub">No secrets in application code</text>
+
+          <rect x="300" y="270" width="380" height="240" rx="24" fill="#ede7ff" stroke="#c5b6ff" filter="url(#softShadow)"/>
+          <text x="328" y="308" class="node-title">Azure AI Foundry project</text>
+          <text x="328" y="336" class="node-sub">proj-fsi-demo on aif66lhnuec</text>
+          <text x="328" y="368" class="node-sub">11 prompt agents</text>
+          <text x="328" y="394" class="node-sub">8 specialists + 3 orchestrators</text>
+          <text x="328" y="426" class="node-sub">Model deployments: gpt-5.1, gpt-5.4-mini</text>
+          <text x="328" y="452" class="node-sub">Toolboxes: code_interpreter + web_search</text>
+          <text x="328" y="478" class="node-sub">Responses API: agent_reference invocation</text>
+
+          <rect x="760" y="272" width="300" height="104" rx="18" fill="#e8f7f2" stroke="#9ed7c4" filter="url(#softShadow)"/>
+          <text x="786" y="310" class="node-title">Azure Storage + data</text>
+          <text x="786" y="336" class="node-sub">Synthetic datasets uploaded</text>
+          <text x="786" y="360" class="node-sub">Context also baked into API image</text>
+
+          <rect x="760" y="410" width="300" height="104" rx="18" fill="#e8f7f2" stroke="#9ed7c4" filter="url(#softShadow)"/>
+          <text x="786" y="448" class="node-title">Key Vault (future MCP)</text>
+          <text x="786" y="474" class="node-sub">Vendor data provider secrets</text>
+          <text x="786" y="498" class="node-sub">FactSet, PitchBook, Moody's, etc.</text>
+
+          <rect x="300" y="560" width="300" height="70" rx="18" fill="#e8f7f2" stroke="#9ed7c4" filter="url(#softShadow)"/>
+          <text x="326" y="592" class="node-title">Application Insights</text>
+          <text x="326" y="616" class="node-sub">scenario.run + agent.turn spans</text>
+
+          <rect x="690" y="560" width="300" height="70" rx="18" fill="#e8f7f2" stroke="#9ed7c4" filter="url(#softShadow)"/>
+          <text x="716" y="592" class="node-title">Azure Container Registry</text>
+          <text x="716" y="616" class="node-sub">Portal and API container images</text>
+
+          <line x1="244" y1="82" x2="330" y2="82" stroke="#536176" stroke-width="2.5" marker-end="url(#arrow)"/>
+          <text x="258" y="70" class="edge-label">1. open portal</text>
+
+          <path d="M630 106 C670 106 680 106 720 106" fill="none" stroke="#536176" stroke-width="2.5" marker-end="url(#arrow)"/>
+          <text x="642" y="92" class="edge-label">2. identity auth</text>
+
+          <path d="M486 188 C486 220 486 238 486 270" fill="none" stroke="#536176" stroke-width="2.5" marker-end="url(#arrow)"/>
+          <text x="500" y="232" class="edge-label">3. /api/run SSE</text>
+
+          <path d="M720 150 C640 215 616 238 580 270" fill="none" stroke="#536176" stroke-width="2.5" marker-end="url(#arrow)"/>
+          <text x="646" y="234" class="edge-label">4. RBAC grants</text>
+
+          <path d="M680 378 C720 350 730 334 760 326" fill="none" stroke="#536176" stroke-width="2.5" marker-end="url(#arrow)"/>
+          <text x="696" y="350" class="edge-label">5. data context</text>
+
+          <path d="M680 440 C716 452 728 460 760 462" fill="none" stroke="#536176" stroke-width="2.5" stroke-dasharray="7 7" marker-end="url(#arrow)"/>
+          <text x="692" y="486" class="edge-label">future MCP secrets</text>
+
+          <path d="M448 510 C448 530 448 540 448 560" fill="none" stroke="#536176" stroke-width="2.5" marker-end="url(#arrow)"/>
+          <text x="462" y="544" class="edge-label">6. telemetry</text>
+
+          <path d="M840 560 C760 512 700 486 660 462" fill="none" stroke="#536176" stroke-width="2.5" marker-end="url(#arrow)"/>
+          <text x="760" y="526" class="edge-label">image pull</text>
+
+          <path d="M330 150 C250 220 220 332 300 410" fill="none" stroke="#536176" stroke-width="2.5" marker-end="url(#arrow)"/>
+          <text x="170" y="292" class="edge-label">7. artifacts returned</text>
+        </svg>
+      </div>
+      <div class="legend">
+        <span><i class="swatch" style="background:#e7f0ff"></i>Container hosting</span>
+        <span><i class="swatch" style="background:#ede7ff"></i>Foundry agent runtime</span>
+        <span><i class="swatch" style="background:#fff1d6"></i>Identity and access</span>
+        <span><i class="swatch" style="background:#e8f7f2"></i>Supporting services</span>
+      </div>
+    </section>
+
+    <section>
+      <h2>Azure services and where they are used</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Azure service / feature</th>
+              <th>Instance or location</th>
+              <th>Purpose in the demo</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Resource Group</strong></td>
+              <td><code>rg-fsi-demo</code></td>
+              <td>Single deployment boundary for all demo resources and one-command teardown.</td>
+            </tr>
+            <tr>
+              <td><strong>Azure AI Foundry / AI Services</strong></td>
+              <td><code>aif66lhnuec</code>, <code>proj-fsi-demo</code></td>
+              <td>Hosts the project endpoint, prompt agents, model deployments, and Foundry toolboxes.</td>
+            </tr>
+            <tr>
+              <td><strong>Model deployments</strong></td>
+              <td><code>gpt-5.1</code>, <code>gpt-5.4-mini</code>, <code>text-embedding-3-large</code></td>
+              <td>Reasoning and embedding capacity for the multi-agent workflows.</td>
+            </tr>
+            <tr>
+              <td><strong>Foundry Agent Service</strong></td>
+              <td>8 specialist agents + 3 orchestrator agents</td>
+              <td>Runs the converted FSI skill instructions and synthesizes each final scenario response.</td>
+            </tr>
+            <tr>
+              <td><strong>Foundry toolboxes</strong></td>
+              <td><code>tb-equity-research</code>, <code>tb-ib-pitch</code>, <code>tb-pe-lbo</code></td>
+              <td>Scenario-specific shared tool catalogs exposing Code Interpreter and Web Search.</td>
+            </tr>
+            <tr>
+              <td><strong>Code Interpreter</strong></td>
+              <td>Attached directly to each agent</td>
+              <td>Produces downloadable <code>.xlsx</code> and <code>.pptx</code> artifacts.</td>
+            </tr>
+            <tr>
+              <td><strong>Web Search</strong></td>
+              <td>Attached to agents and listed in toolboxes</td>
+              <td>Provides grounding capability for narrative, market, and competitive context.</td>
+            </tr>
+            <tr>
+              <td><strong>Azure Container Apps</strong></td>
+              <td><code>ca-portal-fsi-demo</code>, <code>ca-api-fsi-demo</code></td>
+              <td>Hosts the public portal and backend API with HTTPS ingress, revisions, and scaling.</td>
+            </tr>
+            <tr>
+              <td><strong>Azure Container Registry</strong></td>
+              <td><code>acr66lhnuec</code></td>
+              <td>Stores the built portal and API container images consumed by Container Apps.</td>
+            </tr>
+            <tr>
+              <td><strong>Managed Identity + RBAC</strong></td>
+              <td><code>id-fsi-demo-66lhnuec</code></td>
+              <td>Lets the API call Foundry, pull images, and access storage without embedded secrets.</td>
+            </tr>
+            <tr>
+              <td><strong>Azure Storage</strong></td>
+              <td><code>st66lhnuec</code></td>
+              <td>Stores synthetic datasets. Generated artifacts are currently served from API temp storage.</td>
+            </tr>
+            <tr>
+              <td><strong>Azure Key Vault</strong></td>
+              <td><code>kv-fsi-demo-66lhnuec</code></td>
+              <td>Reserved for future vendor MCP credentials such as FactSet, PitchBook, and Moody's.</td>
+            </tr>
+            <tr>
+              <td><strong>Application Insights</strong></td>
+              <td><code>appi-fsi-demo-66lhnuec</code></td>
+              <td>Receives OpenTelemetry spans for scenario runs and individual agent turns.</td>
+            </tr>
+            <tr>
+              <td><strong>Log Analytics</strong></td>
+              <td>Container Apps managed environment</td>
+              <td>Stores portal/API runtime logs for diagnostics.</td>
+            </tr>
+            <tr>
+              <td><strong>Bicep</strong></td>
+              <td><code>infra/</code></td>
+              <td>Defines repeatable infrastructure deployment for the full Azure stack.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Runtime sequence</h2>
+      <ol class="steps">
+        <li>The user opens the public portal hosted by Azure Container Apps.</li>
+        <li>The portal loads scenarios and toolbox metadata from <code>GET /api/scenarios</code> and <code>GET /api/toolboxes</code>.</li>
+        <li>The user starts a scenario with <code>POST /api/run</code>; the API streams progress with Server-Sent Events.</li>
+        <li>The API authenticates through the Container App's user-assigned managed identity and Azure RBAC.</li>
+        <li>The API invokes Foundry prompt agents using <code>responses.create</code> and <code>agent_reference</code>.</li>
+        <li>Specialist agents run in sequence and receive the user prompt, synthetic data context, and upstream outputs.</li>
+        <li>Code Interpreter builds files; Web Search is available for grounding.</li>
+        <li>Foundry returns container-file citations; the API downloads the files and exposes <code>/api/artifacts/{artifact_id}</code>.</li>
+        <li>The portal renders artifact download links and the orchestrator's final synthesis.</li>
+        <li>The API sends <code>scenario.run</code> and <code>agent.turn</code> spans to Application Insights.</li>
+      </ol>
+    </section>
+
+    <section>
+      <h2>Artifacts and observability</h2>
+      <h3>Artifacts</h3>
+      <p>
+        Generated workbooks and decks appear in the portal live stream. The API keeps a temp copy in the
+        container and serves it through <code>/api/artifacts/{artifact_id}</code>. For durable links, persist
+        generated files to Azure Storage Blob and return blob or SAS URLs.
+      </p>
+
+      <h3>Telemetry</h3>
+      <p>
+        The API uses <code>azure-monitor-opentelemetry</code>. Application Insights receives custom spans:
+        <code>scenario.run</code> for the whole workflow and <code>agent.turn</code> for each specialist or
+        orchestrator turn.
+      </p>
+      <pre><code>dependencies
+| where timestamp &gt; ago(1h)
+| where name in ("scenario.run", "agent.turn")
+| project timestamp, name, customDimensions
+| order by timestamp desc</code></pre>
+    </section>
+
+    <section>
+      <h2>Operations quick reference</h2>
+      <h3>Run validation</h3>
+      <pre><code>cd C:\Users\samsonlee\GHCP\fsi-multiagent-demo
+.\agents\.venv\Scripts\python.exe .\scripts\eval_scenarios.py</code></pre>
+
+      <h3>Recreate Foundry assets</h3>
+      <pre><code>cd C:\Users\samsonlee\GHCP\fsi-multiagent-demo\agents
+.\.venv\Scripts\python.exe .\scripts\create_toolboxes.py
+.\.venv\Scripts\python.exe .\scripts\create_agents.py</code></pre>
+
+      <h3>Teardown</h3>
+      <pre><code>az group delete --name rg-fsi-demo --yes --no-wait</code></pre>
+    </section>
+
+    <section>
+      <h2>Path to live vendor data</h2>
+      <p>
+        The current demo is self-contained with synthetic data. To connect live FSI providers, store vendor
+        credentials in Key Vault, add the provider as an MCP tool connection or toolbox tool in Foundry, attach
+        it to the relevant specialist agents, and update the instructions to prefer live sources.
+      </p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Workflow need</th>
+              <th>Vendor MCP examples</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Market data, estimates, comps</td>
+              <td>FactSet, LSEG, Morningstar</td>
+            </tr>
+            <tr>
+              <td>Private-company and sponsor data</td>
+              <td>PitchBook, Chronograph</td>
+            </tr>
+            <tr>
+              <td>Credit and issuer context</td>
+              <td>Moody's</td>
+            </tr>
+            <tr>
+              <td>Transcripts and news</td>
+              <td>Aiera, MT Newswire</td>
+            </tr>
+            <tr>
+              <td>Source documents</td>
+              <td>Box, Egnyte</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <p class="footer">
+      Source: README.md and docs/runbook.md in this repository. Generated as a standalone HTML report.
+    </p>
+  </main>
+</body>
+</html>
