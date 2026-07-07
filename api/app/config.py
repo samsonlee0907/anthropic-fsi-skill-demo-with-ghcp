@@ -111,6 +111,16 @@ DEFAULT_PROMPTS = {
     "pe-lbo": "Screen NovaGrid Technologies as an LBO candidate using the synthetic assumptions. If a real public ticker is provided, use SEC EDGAR for filing-backed financials and cite filing URLs. Build the LBO model, estimate returns (IRR/MOIC), and audit the model.",
 }
 
+# Prompts that DELIBERATELY name a real public company/ticker so the agent exercises the
+# SEC EDGAR MCP tool (get_company_info / get_recent_filings / get_key_metrics) and cites
+# real filing URLs. Surfaced in the portal as a one-click "SEC EDGAR example" so the tool
+# is easy to demonstrate -- the default NovaGrid prompts are synthetic and never trigger it.
+EDGAR_PROMPTS = {
+    "equity-research": "Benchmark NovaGrid Technologies against NextEra Energy (ticker NEE). Use SEC EDGAR to pull NextEra's latest 10-K filing metadata and key XBRL metrics (revenue, net income), cite the filing URL and date, then build a comparison DCF/comps package. Ground all real-company figures in the SEC filing.",
+    "ib-pitch": "Prepare an IB pitch positioning NovaGrid Technologies against Apple Inc. (ticker AAPL) as a scale benchmark. Use SEC EDGAR to pull Apple's most recent 10-K filing metadata and headline financials, cite the filing URL and date, then build a short pitch deck with a competitive-positioning slide.",
+    "pe-lbo": "Screen Tesla, Inc. (ticker TSLA) as an illustrative LBO candidate. Use SEC EDGAR to pull Tesla's latest 10-K filing metadata and key financials (revenue, operating income, total debt), cite the filing URL and date, then build the LBO model and estimate IRR/MOIC.",
+}
+
 
 def _data_dir() -> Path:
     # Single source of truth: api/data (also what the Docker image ships as /app/data).

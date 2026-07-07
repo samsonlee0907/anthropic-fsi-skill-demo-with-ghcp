@@ -148,6 +148,21 @@
   .buttonSpinner { color: oklch(1 0 0); }
   .agentOutput { min-height: 116px; max-height: 460px; margin: 0; overflow: auto; padding: 18px 20px; border-radius: var(--radius-md); color: var(--color-ink); background: var(--color-surface); border: 1px solid var(--color-border); font-size: 0.94rem; line-height: 1.62; }
   .agentOutputEmpty { display: flex; align-items: center; color: var(--color-muted); font-style: italic; }
+  .promptPresets { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.4rem 0 0.5rem; }
+  .presetButton { font-size: 0.8rem; font-weight: 600; padding: 0.3rem 0.7rem; border-radius: 999px; border: 1px solid var(--color-border); background: var(--color-surface); color: var(--color-navy-760); cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+  .presetButton:hover:not(:disabled) { background: var(--color-surface-strong); border-color: var(--color-primary); }
+  .presetButton:disabled { opacity: 0.55; cursor: not-allowed; }
+  .presetButton.edgarPreset { border-color: var(--color-primary); color: var(--color-primary-strong); background: var(--color-primary-soft); }
+  .activityFeed { list-style: none; margin: 0 0 0.85rem; padding: 0.6rem 0.75rem; display: flex; flex-direction: column; gap: 0.35rem; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 12px; }
+  .activityItem { display: flex; align-items: center; gap: 0.5rem; font-size: 0.86rem; color: var(--color-muted); }
+  .activityItem.doneStep { color: var(--color-ink); }
+  .activityItem .activityDot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-border); flex: none; }
+  .activityItem.doneStep .activityDot { background: var(--color-success); }
+  .activityItem.live .activityDot { background: var(--color-primary); animation: activityPulse 1.1s ease-in-out infinite; }
+  .activityItem.live { color: var(--color-primary-strong); font-weight: 600; }
+  .activityLabel { display: inline-flex; align-items: center; gap: 0.35rem; flex-wrap: wrap; }
+  .activityDetail { font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.78rem; background: var(--color-surface-strong); border: 1px solid var(--color-border); border-radius: 6px; padding: 0.05rem 0.35rem; color: var(--color-navy-760); }
+  @keyframes activityPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.45; transform: scale(0.72); } }
   .markdownBody > :first-child { margin-top: 0; }
   .markdownBody > :last-child { margin-bottom: 0; }
   .markdownBody h1, .markdownBody h2, .markdownBody h3, .markdownBody h4, .markdownBody h5 { margin: 1.05em 0 0.5em; line-height: 1.25; font-weight: 700; color: var(--color-navy-950); }

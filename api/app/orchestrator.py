@@ -12,6 +12,13 @@ The hosted agent's ArtifactEgressMiddleware uploads any generated .xlsx/.pptx to
 sentinel to the response text. This orchestrator parses those sentinels, downloads the blobs
 privately (managed identity, no SAS), registers them for ``/api/artifacts/{id}`` download,
 and strips the sentinel lines from the text shown to the user.
+
+Progress UX: because a background run does not expose partial output (the stored
+response's ``output`` stays empty until completion, and code_interpreter items are
+stripped from the outer response), the BFF cannot forward a real token stream. To
+avoid a static spinner it emits ``activity`` SSE events in two ways: time-based
+lifecycle *phases* while the run is in flight, and the REAL tool calls (governed
+skill loads + SEC EDGAR MCP calls) parsed from the completed payload.
 """
 import asyncio
 import json
@@ -74,6 +81,116 @@ _FALLBACK_NAMES = {
 
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
+
+
+# Time-based lifecycle phases surfaced as `activity` events while the background
+# run is in flight. The hosted runtime does NOT expose partial output during a
+# background run (the stored response's `output` stays empty until it completes,
+# and code_interpreter items are stripped from the outer response), so a real
+# event stream is not available mid-run. These phases give the user a visible,
+# continuously-advancing view of the typical run lifecycle instead of a static
+# "Awaiting output" spinner. Real, per-tool activities (skill loads, SEC EDGAR
+# MCP calls) are emitted from the completed payload once the run finishes.
+_RUN_PHASES = (
+    (0, "default", "Request accepted — the agent is starting up"),
+    (6, "function_call", "Loading governed skills from the scenario toolbox"),
+    (24, "default", "Reasoning over the scenario inputs and synthetic data"),
+    (48, "code_interpreter_call", "Running the financial model in the code interpreter"),
+    (100, "code_interpreter_call", "Composing the Office artifact (workbook / deck)"),
+    (160, "default", "Finalizing the narrative and packaging the artifact"),
+)
+
+
+def _phase_activities(elapsed: int, emitted: set, agent_name: str) -> list:
+    """Return SSE strings for any lifecycle phases newly crossed at ``elapsed``."""
+    out = []
+    for threshold, kind, label in _RUN_PHASES:
+        if elapsed >= threshold and threshold not in emitted:
+            emitted.add(threshold)
+            out.append(_sse({"type": "activity", "agent": agent_name,
+                             "kind": kind, "label": label}))
+    return out
+
+
+def _skill_arg(item: dict) -> str:
+    """Extract the skill name from a load_skill function_call item's arguments."""
+    args = item.get("arguments")
+    if isinstance(args, str):
+        try:
+            args = json.loads(args)
+        except (ValueError, TypeError):
+            return ""
+    if isinstance(args, dict):
+        for key in ("skill", "skill_id", "name", "id"):
+            val = args.get(key)
+            if val:
+                return str(val)
+    return ""
+
+
+def _activities_from_payload(payload: dict, agent_name: str) -> list:
+    """Derive REAL behind-the-scenes tool-call activities from a completed run.
+
+    The outer Responses payload exposes function_call items (governed skill loads
+    via progressive disclosure) and mcp_call items (the self-hosted SEC EDGAR
+    remote MCP tool). code_interpreter items are stripped by the host, so those
+    are covered by the time-based lifecycle phases instead.
+    """
+    out = []
+    seen = set()
+    skill_names = []
+    n_skill_loads = 0
+    for item in payload.get("output") or []:
+        itype = item.get("type") or ""
+        if itype == "function_call":
+            name = item.get("name") or ""
+            if name in ("load_skill", "load_skills"):
+                # Aggregate all skill loads into a single activity below.
+                n_skill_loads += 1
+                sk = _skill_arg(item)
+                if sk and sk not in skill_names:
+                    skill_names.append(sk)
+                continue
+            detail = name or "tool"
+            label = "Called a toolbox function"
+            key = ("fn", detail)
+        elif itype in ("mcp_call", "mcp_tool_call"):
+            detail = item.get("name") or item.get("tool_name") or "filing lookup"
+            label = "Queried SEC EDGAR (MCP)"
+            key = ("mcp", detail)
+        elif "web_search" in itype:
+            detail = ""
+            label = "Ran a web search"
+            key = ("web",)
+        else:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        event = {"type": "activity", "agent": agent_name, "kind": _KIND_FOR.get(itype, "default"),
+                 "label": label}
+        if detail:
+            event["detail"] = detail
+        out.append(_sse(event))
+
+    if n_skill_loads:
+        label = "Loaded governed skills" if n_skill_loads > 1 else "Loaded a governed skill"
+        event = {"type": "activity", "agent": agent_name, "kind": "function_call", "label": label}
+        if skill_names:
+            event["detail"] = ", ".join(skill_names)
+        elif n_skill_loads > 1:
+            event["detail"] = f"{n_skill_loads} loaded"
+        # Skill loads happen before tool calls in the turn; show them first.
+        out.insert(0, _sse(event))
+    return out
+
+
+_KIND_FOR = {
+    "function_call": "function_call",
+    "mcp_call": "mcp_call",
+    "mcp_tool_call": "mcp_call",
+    "web_search_call": "web_search_call",
+}
 
 
 @lru_cache(maxsize=1)
@@ -515,9 +632,14 @@ async def run_scenario(scenario_key: str, message: str) -> AsyncIterator[str]:
 
                     t0 = time.time()
                     payload = submit
+                    emitted_phases = set()
+                    for _s in _phase_activities(0, emitted_phases, agent_name):
+                        yield _s
                     while status in ("queued", "in_progress"):
                         await asyncio.sleep(_POLL_INTERVAL_S)
                         elapsed = int(time.time() - t0)
+                        for _s in _phase_activities(elapsed, emitted_phases, agent_name):
+                            yield _s
                         yield _sse({"type": "status", "stage": "working",
                                     "scenario": scenario_key, "elapsed_s": elapsed})
                         if elapsed > _POLL_TIMEOUT_S:
@@ -537,12 +659,21 @@ async def run_scenario(scenario_key: str, message: str) -> AsyncIterator[str]:
                         continue
                     raise
 
+            # Surface the REAL tool calls that fired during the primary run
+            # (governed skill loads + SEC EDGAR MCP calls). code_interpreter items
+            # are stripped by the host, so they are represented by the phases above.
+            for _s in _activities_from_payload(payload, agent_name):
+                yield _s
+
             raw_text = _response_text(payload)
             clean_text, artifacts = await asyncio.to_thread(_harvest_from_text_sync, raw_text)
 
             if not any(art.get("id") for art in artifacts):
                 yield _sse({"type": "status", "stage": "ensuring_artifact",
                             "scenario": scenario_key})
+                yield _sse({"type": "activity", "agent": agent_name,
+                            "kind": "code_interpreter_call",
+                            "label": "Re-running to materialize the artifact"})
                 try:
                     submit = await asyncio.to_thread(
                         _submit_background_sync,
@@ -556,9 +687,12 @@ async def run_scenario(scenario_key: str, message: str) -> AsyncIterator[str]:
 
                     t0 = time.time()
                     payload = submit
+                    emitted_phases = set()
                     while status in ("queued", "in_progress"):
                         await asyncio.sleep(_POLL_INTERVAL_S)
                         elapsed = int(time.time() - t0)
+                        for _s in _phase_activities(elapsed, emitted_phases, agent_name):
+                            yield _s
                         yield _sse({"type": "status", "stage": "working",
                                     "scenario": scenario_key, "elapsed_s": elapsed})
                         if elapsed > _POLL_TIMEOUT_S:

@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from azure.identity import DefaultAzureCredential
 
-from .config import AGENT_NAMES, DEFAULT_PROMPTS, PROJECT_ENDPOINT, SCENARIOS, TOOLBOX_META
+from .config import AGENT_NAMES, DEFAULT_PROMPTS, EDGAR_PROMPTS, PROJECT_ENDPOINT, SCENARIOS, TOOLBOX_META
 from .orchestrator import ARTIFACTS, run_scenario
 from .telemetry import configure as configure_telemetry
 
@@ -48,6 +48,7 @@ def scenarios():
             "agent": AGENT_NAMES.get(key, f"fsi-{key}"),
             "skills": s["skills"],
             "default_prompt": DEFAULT_PROMPTS.get(key, ""),
+            "edgar_prompt": EDGAR_PROMPTS.get(key, ""),
         })
     return {"scenarios": out}
 

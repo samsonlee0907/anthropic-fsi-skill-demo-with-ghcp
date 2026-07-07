@@ -5,6 +5,7 @@ export type RunEvent =
       scenario: string;
       title?: string;
       toolbox?: string;
+      elapsed_s?: number;
     }
   | {
       type: 'agent_start';
@@ -13,7 +14,19 @@ export type RunEvent =
       label: string;
     }
   | {
+      type: 'activity';
+      agent: string;
+      kind: string;
+      label: string;
+      detail?: string;
+    }
+  | {
       type: 'delta';
+      agent: string;
+      text: string;
+    }
+  | {
+      type: 'final';
       agent: string;
       text: string;
     }

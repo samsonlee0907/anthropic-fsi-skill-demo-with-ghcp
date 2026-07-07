@@ -17,6 +17,7 @@ type Scenario = {
   agent: string;
   skills: string[];
   default_prompt: string;
+  edgar_prompt?: string;
 };
 
 type Toolbox = {
@@ -36,12 +37,20 @@ type Artifact = {
   url: string;
 };
 
+type Activity = {
+  kind: string;
+  label: string;
+  detail?: string;
+};
+
 type AgentRun = {
   agent: string;
   role: 'scenario';
   label: string;
   status: 'running' | 'done' | 'error';
   output: string;
+  activities: Activity[];
+  elapsedS?: number;
   artifacts: Artifact[];
   error?: string;
 };
@@ -213,6 +222,14 @@ export function Studio() {
         if (event.title) {
           setRunMeta({ scenario: event.scenario, title: event.title, toolbox: event.toolbox ?? '' });
         }
+        if (typeof event.elapsed_s === 'number') {
+          const secs = event.elapsed_s;
+          setAgentRuns((agents) =>
+            agents.map((agent) =>
+              agent.status === 'running' ? { ...agent, elapsedS: secs } : agent
+            )
+          );
+        }
         setOverallStatus('running');
         break;
       case 'agent_start':
@@ -224,10 +241,31 @@ export function Studio() {
           error: undefined
         }));
         break;
+      case 'activity':
+        upsertAgent(event.agent, (agent) => {
+          const last = agent.activities[agent.activities.length - 1];
+          if (last && last.kind === event.kind && last.detail === (event.detail ?? '')) {
+            return agent;
+          }
+          return {
+            ...agent,
+            activities: [
+              ...agent.activities,
+              { kind: event.kind, label: event.label, detail: event.detail }
+            ]
+          };
+        });
+        break;
       case 'delta':
         upsertAgent(event.agent, (agent) => ({
           ...agent,
           output: `${agent.output}${event.text}`
+        }));
+        break;
+      case 'final':
+        upsertAgent(event.agent, (agent) => ({
+          ...agent,
+          output: event.text
         }));
         break;
       case 'artifact':
@@ -284,6 +322,7 @@ export function Studio() {
         label: formatAgentName(agentName),
         status: 'running',
         output: '',
+        activities: [],
         artifacts: []
       };
 
@@ -417,6 +456,27 @@ export function Studio() {
                   ) : null}
                 </div>
                 <label htmlFor="workflow-prompt">Workflow mandate</label>
+                <div className="promptPresets" role="group" aria-label="Prompt presets">
+                  <button
+                    className="presetButton"
+                    type="button"
+                    disabled={isRunning}
+                    onClick={() => setPrompt(selectedScenario.default_prompt)}
+                  >
+                    Default (synthetic)
+                  </button>
+                  {selectedScenario.edgar_prompt ? (
+                    <button
+                      className="presetButton edgarPreset"
+                      type="button"
+                      disabled={isRunning}
+                      onClick={() => setPrompt(selectedScenario.edgar_prompt ?? '')}
+                      title="Loads a prompt that names a real public ticker so the agent calls the SEC EDGAR MCP tool"
+                    >
+                      🏛️ SEC EDGAR example
+                    </button>
+                  ) : null}
+                </div>
                 <textarea
                   id="workflow-prompt"
                   value={prompt}
@@ -526,12 +586,37 @@ function AgentCard({ agentRun }: { agentRun: AgentRun }) {
 
       {agentRun.error ? <Alert tone="error" title="Agent error" message={agentRun.error} /> : null}
 
+      {agentRun.activities.length > 0 ? (
+        <ol className="activityFeed" aria-label={`${agentRun.label} activity`}>
+          {agentRun.activities.map((activity, index) => {
+            const isLast = index === agentRun.activities.length - 1;
+            const live = agentRun.status === 'running' && isLast;
+            return (
+              <li className={`activityItem ${live ? 'live' : 'doneStep'}`} key={`${activity.kind}-${index}`}>
+                <span className="activityDot" aria-hidden="true" />
+                <span className="activityLabel">
+                  {activityIcon(activity.kind)} {activity.label}
+                  {activity.detail ? <code className="activityDetail">{activity.detail}</code> : null}
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+
       {agentRun.output.trim().length > 0 ? (
         <div className="agentOutput markdownBody">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{agentRun.output}</ReactMarkdown>
         </div>
+      ) : agentRun.status === 'running' ? (
+        <div className="agentOutput agentOutputEmpty">
+          {agentRun.activities.length > 0
+            ? 'Working through the analysis…'
+            : 'Starting the workflow…'}
+          {typeof agentRun.elapsedS === 'number' ? ` (${agentRun.elapsedS}s)` : ''}
+        </div>
       ) : (
-        <div className="agentOutput agentOutputEmpty">Awaiting streamed output…</div>
+        <div className="agentOutput agentOutputEmpty">No narrative returned.</div>
       )}
 
       {agentRun.artifacts.length > 0 ? (
@@ -598,6 +683,24 @@ function formatElapsed(milliseconds: number): string {
     .padStart(2, '0');
   const seconds = (totalSeconds % 60).toString().padStart(2, '0');
   return `${minutes}:${seconds}`;
+}
+
+function activityIcon(kind: string): string {
+  switch (kind) {
+    case 'function_call':
+      return '📘';
+    case 'mcp_call':
+    case 'mcp_list_tools':
+      return '🏛️';
+    case 'web_search_call':
+      return '🌐';
+    case 'code_interpreter_call':
+      return '🧮';
+    case 'file_search_call':
+      return '🗂️';
+    default:
+      return '⚙️';
+  }
 }
 
 function formatAgentName(agentName: string): string {
