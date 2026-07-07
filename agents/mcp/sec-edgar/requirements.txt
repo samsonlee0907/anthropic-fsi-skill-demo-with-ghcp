@@ -1,0 +1,4 @@
+sec-edgar-mcp==1.0.8
+mcp[cli]>=1.12.0
+uvicorn[standard]>=0.30.0
+starlette>=0.40.0

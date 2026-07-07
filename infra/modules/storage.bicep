@@ -16,8 +16,20 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   properties: {
     minimumTlsVersion: 'TLS1_2'
     allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
     supportsHttpsTrafficOnly: true
     accessTier: 'Hot'
+    // Data is protected by Entra ID (AAD) RBAC only: shared-key and anonymous blob
+    // access are disabled. Public network access stays Enabled so the Foundry hosted
+    // agents (managed compute, not VNet-joined) and the Container Apps BFF can reach
+    // the account to egress/download artifacts. Disabling public access here breaks
+    // hosted-agent artifact upload (AuthorizationFailure) unless private endpoints are
+    // added for both the agent compute and the Container Apps environment.
+    publicNetworkAccess: 'Enabled'
+    networkAcls: {
+      defaultAction: 'Allow'
+      bypass: 'AzureServices'
+    }
   }
 }
 

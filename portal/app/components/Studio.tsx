@@ -12,14 +12,15 @@ type Scenario = {
   title: string;
   tagline: string;
   toolbox: string;
-  orchestrator: string;
-  agents: string[];
+  agent: string;
+  skills: string[];
   default_prompt: string;
 };
 
 type Toolbox = {
   name: string;
   description: string;
+  tools?: string[];
 };
 
 type HealthResponse = {
@@ -35,7 +36,7 @@ type Artifact = {
 
 type AgentRun = {
   agent: string;
-  role: 'specialist' | 'orchestrator';
+  role: 'scenario';
   label: string;
   status: 'running' | 'done' | 'error';
   output: string;
@@ -202,7 +203,9 @@ export function Studio() {
   function handleRunEvent(event: RunEvent) {
     switch (event.type) {
       case 'status':
-        setRunMeta({ scenario: event.scenario, title: event.title, toolbox: event.toolbox });
+        if (event.title) {
+          setRunMeta({ scenario: event.scenario, title: event.title, toolbox: event.toolbox ?? '' });
+        }
         setOverallStatus('running');
         break;
       case 'agent_start':
@@ -221,12 +224,18 @@ export function Studio() {
         }));
         break;
       case 'artifact':
-        upsertAgent(event.agent, (agent) => ({
-          ...agent,
-          artifacts: agent.artifacts.some((artifact) => artifact.id === event.id)
-            ? agent.artifacts
-            : [...agent.artifacts, { id: event.id, filename: event.filename, url: event.url }]
-        }));
+        if (!event.id || !event.url) {
+          break;
+        }
+        {
+          const artifact: Artifact = { id: event.id, filename: event.filename, url: event.url };
+          upsertAgent(event.agent, (agent) => ({
+            ...agent,
+            artifacts: agent.artifacts.some((existing) => existing.id === artifact.id)
+              ? agent.artifacts
+              : [...agent.artifacts, artifact]
+          }));
+        }
         break;
       case 'error':
         if (event.agent) {
@@ -264,7 +273,7 @@ export function Studio() {
 
       const fallbackAgent: AgentRun = {
         agent: agentName,
-        role: 'specialist',
+        role: 'scenario',
         label: formatAgentName(agentName),
         status: 'running',
         output: '',
@@ -300,10 +309,11 @@ export function Studio() {
         <section className="heroContent" aria-labelledby="studio-title">
           <div>
             <p className="heroLabel">Azure AI Foundry demo portal</p>
-            <h1 id="studio-title">Coordinate specialist financial agents from one controlled workspace.</h1>
+            <h1 id="studio-title">Run scenario-based financial agents backed by a governed skill library.</h1>
             <p className="heroCopy">
-              Select an FSI workflow, tailor the mandate, and watch analysts, modeling agents, and the
-              orchestrator produce live narrative outputs and downloadable artifacts.
+              Select an FSI workflow, tailor the mandate, and watch a dedicated scenario agent load
+              the relevant Anthropic-derived skills, run code interpreter, and produce live narrative
+              output plus downloadable Excel and PowerPoint artifacts.
             </p>
           </div>
           <aside className="heroPanel" aria-label="Run readiness">
@@ -329,7 +339,7 @@ export function Studio() {
           <div className="sectionHeading">
             <div>
               <h2 id="scenarios-title">Scenario library</h2>
-              <p>Three production-style workflows mapped to Foundry agents and toolboxes.</p>
+              <p>Three production-style workflows, each mapped to one Foundry scenario agent and its skill toolbox.</p>
             </div>
             {isLoading ? <span className="subtleStatus">Loading scenarios…</span> : null}
           </div>
@@ -349,12 +359,15 @@ export function Studio() {
                       <span>{scenario.key === selectedKey ? 'Selected' : 'Open'}</span>
                     </span>
                     <span className="scenarioTagline">{scenario.tagline}</span>
-                    <span className="chipRow" aria-label={`${scenario.title} agents`}>
-                      {scenario.agents.map((agent) => (
-                        <span className="chip" key={agent}>
-                          {formatAgentName(agent)}
+                    <span className="chipRow" aria-label={`${scenario.title} skills`}>
+                      {scenario.skills.slice(0, 4).map((skill) => (
+                        <span className="chip" key={skill}>
+                          {formatSkillName(skill)}
                         </span>
                       ))}
+                      {scenario.skills.length > 4 ? (
+                        <span className="chip">+{scenario.skills.length - 4} more</span>
+                      ) : null}
                       <span className="chip toolboxChip">{scenario.toolbox}</span>
                     </span>
                   </button>
@@ -374,6 +387,16 @@ export function Studio() {
 
             {selectedScenario ? (
               <div className="promptComposer">
+                <div className="skillLibrary" aria-label="Skills available to this agent">
+                  <span className="skillLibraryLabel">Skills in toolbox</span>
+                  <span className="chipRow">
+                    {selectedScenario.skills.map((skill) => (
+                      <span className="chip" key={skill}>
+                        {formatSkillName(skill)}
+                      </span>
+                    ))}
+                  </span>
+                </div>
                 <label htmlFor="workflow-prompt">Workflow mandate</label>
                 <textarea
                   id="workflow-prompt"
@@ -435,8 +458,8 @@ export function Studio() {
               <h2 id="timeline-title">Agent timeline</h2>
               <p>
                 {runMeta
-                  ? `${runMeta.title} is streaming through the specialist agents and final orchestrator.`
-                  : 'Run events will appear here as each agent starts, streams, and completes.'}
+                  ? `${runMeta.title} is loading its skills and streaming the scenario agent's output.`
+                  : 'Run events will appear here as the scenario agent starts, streams, and completes.'}
               </p>
             </div>
             <div className="elapsedPill" title="Elapsed time">
@@ -449,7 +472,7 @@ export function Studio() {
             {agentRuns.length === 0 ? (
               <div className="timelineEmpty">
                 <strong>No agent events yet.</strong>
-                <p>When the workflow starts, specialist output and artifacts will stream into this timeline.</p>
+                <p>When the workflow starts, the scenario agent's output and artifacts will stream into this timeline.</p>
               </div>
             ) : (
               agentRuns.map((agentRun) => <AgentCard agentRun={agentRun} key={agentRun.agent} />)
@@ -462,13 +485,11 @@ export function Studio() {
 }
 
 function AgentCard({ agentRun }: { agentRun: AgentRun }) {
-  const isOrchestrator = agentRun.role === 'orchestrator';
-
   return (
-    <article className={`agentCard ${agentRun.status} ${isOrchestrator ? 'orchestrator' : ''}`}>
+    <article className={`agentCard ${agentRun.status}`}>
       <header className="agentHeader">
         <div>
-          <span className="rolePill">{isOrchestrator ? 'Final synthesis' : 'Specialist'}</span>
+          <span className="rolePill">Scenario agent</span>
           <h3>{agentRun.label}</h3>
           <p>{formatAgentName(agentRun.agent)}</p>
         </div>
@@ -551,4 +572,8 @@ function formatAgentName(agentName: string): string {
   return agentName
     .replace(/[-_]+/g, ' ')
     .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function formatSkillName(skill: string): string {
+  return skill.replace(/[-_]+/g, ' ').replace(/\bxls\b/i, 'XLS');
 }

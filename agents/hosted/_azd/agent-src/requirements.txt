@@ -1,0 +1,35 @@
+# v3 Foundry HOSTED agent runtime (fsi_hosted_agent_v3.py + fsi_artifact_egress.py).
+#
+# Pinned to the exact stack validated in-process against rg-fsi-demo-v3:
+# skills-over-MCP (FoundryToolbox.as_skills_provider) + native code_interpreter +
+# ToolApprovalMiddleware + server-side Blob artifact egress.
+#
+# NOTE: agent-framework-foundry-hosting 1.0.0a260630 requires agent-framework-core
+# >=1.10.0 (this is why the v2 api/requirements.txt could NOT use this hosting pkg).
+# Depend on the concrete sub-packages the code imports, NOT the agent-framework[all]
+# meta package (its orchestrations extra pins conflicting core versions -> pip
+# ResolutionImpossible, the failure seen during v2 image builds).
+
+agent-framework-core==1.10.0
+agent-framework-foundry==1.10.0
+agent-framework-foundry-hosting==1.0.0a260630
+agent-framework-openai==1.10.0
+
+# Foundry Responses + Containers files API (native CI artifact retrieval in egress).
+openai==2.44.0
+azure-ai-projects==2.3.0
+azure-identity==1.26.0b2
+
+# Server-side artifact egress to the private `artifacts` blob container.
+azure-storage-blob==12.30.0
+
+# Toolbox MCP transport + skill loading.
+mcp==1.28.1
+aiohttp==3.14.1
+httpx==0.28.1
+httpx-sse==0.4.3
+
+# NOTE: SEC EDGAR is consumed as a self-hosted REMOTE MCP tool (see agents/mcp/), NOT
+# imported in this agent image, so `sec-edgar-mcp` is intentionally absent here.
+
+python-dotenv==1.2.2

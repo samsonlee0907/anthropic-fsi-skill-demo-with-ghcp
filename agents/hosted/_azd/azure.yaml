@@ -1,0 +1,138 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: azd
+services:
+    fsi-equity-v3:
+        project: ./agent-src
+        host: azure.ai.agent
+        language: python
+        codeConfiguration:
+            dependencyResolution: remote_build
+            entryPoint: fsi_hosted_agent_v3.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "0.5"
+                memory: 1Gi
+        environmentVariables:
+            - name: FOUNDRY_PROJECT_ENDPOINT
+              value: ${FOUNDRY_PROJECT_ENDPOINT}
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+            - name: TOOLBOX_ENDPOINT
+              value: ${TOOLBOX_ENDPOINT_EQUITY}
+            - name: STORAGE_BLOB_ENDPOINT
+              value: ${STORAGE_BLOB_ENDPOINT}
+            - name: ARTIFACTS_CONTAINER
+              value: artifacts
+            - name: SEC_EDGAR_MCP_URL
+              value: ${SEC_EDGAR_MCP_URL}
+            - name: FSI_MCP_KEY
+              value: ${FSI_MCP_KEY}
+            - name: FSI_MCP_KEY_HEADER
+              value: x-fsi-mcp-key
+            - name: SEC_EDGAR_DEEP_TOOLS
+              value: "false"
+            - name: FSI_STORE
+              value: "false"
+            - name: ENABLE_INSTRUMENTATION
+              value: "false"
+            - name: FSI_SCENARIO_TITLE
+              value: Equity Research & Valuation
+            - name: FSI_SCENARIO_BRIEF
+              value: Build DCF, comps and 3-statement models and an institutional-quality valuation package.
+        kind: hosted
+        name: fsi-equity-v3
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+    fsi-ib-pitch-v3:
+        project: ./agent-src
+        host: azure.ai.agent
+        language: python
+        codeConfiguration:
+            dependencyResolution: remote_build
+            entryPoint: fsi_hosted_agent_v3.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "0.5"
+                memory: 1Gi
+        environmentVariables:
+            - name: FOUNDRY_PROJECT_ENDPOINT
+              value: ${FOUNDRY_PROJECT_ENDPOINT}
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+            - name: TOOLBOX_ENDPOINT
+              value: ${TOOLBOX_ENDPOINT_IB}
+            - name: STORAGE_BLOB_ENDPOINT
+              value: ${STORAGE_BLOB_ENDPOINT}
+            - name: ARTIFACTS_CONTAINER
+              value: artifacts
+            - name: SEC_EDGAR_MCP_URL
+              value: ${SEC_EDGAR_MCP_URL}
+            - name: FSI_MCP_KEY
+              value: ${FSI_MCP_KEY}
+            - name: FSI_MCP_KEY_HEADER
+              value: x-fsi-mcp-key
+            - name: SEC_EDGAR_DEEP_TOOLS
+              value: "false"
+            - name: FSI_STORE
+              value: "false"
+            - name: ENABLE_INSTRUMENTATION
+              value: "false"
+            - name: FSI_SCENARIO_TITLE
+              value: Investment Banking Pitch & Deal Prep
+            - name: FSI_SCENARIO_BRIEF
+              value: Build competitive analysis, comps exhibits and an institutional-quality pitch deck (.pptx) with supporting workbooks.
+        kind: hosted
+        name: fsi-ib-pitch-v3
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+    fsi-pe-lbo-v3:
+        project: ./agent-src
+        host: azure.ai.agent
+        language: python
+        codeConfiguration:
+            dependencyResolution: remote_build
+            entryPoint: fsi_hosted_agent_v3.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "0.5"
+                memory: 1Gi
+        environmentVariables:
+            - name: FOUNDRY_PROJECT_ENDPOINT
+              value: ${FOUNDRY_PROJECT_ENDPOINT}
+            - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+              value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
+            - name: TOOLBOX_ENDPOINT
+              value: ${TOOLBOX_ENDPOINT_LBO}
+            - name: STORAGE_BLOB_ENDPOINT
+              value: ${STORAGE_BLOB_ENDPOINT}
+            - name: ARTIFACTS_CONTAINER
+              value: artifacts
+            - name: SEC_EDGAR_MCP_URL
+              value: ${SEC_EDGAR_MCP_URL}
+            - name: FSI_MCP_KEY
+              value: ${FSI_MCP_KEY}
+            - name: FSI_MCP_KEY_HEADER
+              value: x-fsi-mcp-key
+            - name: SEC_EDGAR_DEEP_TOOLS
+              value: "false"
+            - name: FSI_STORE
+              value: "false"
+            - name: ENABLE_INSTRUMENTATION
+              value: "false"
+            - name: FSI_SCENARIO_TITLE
+              value: Private Equity LBO Screening
+            - name: FSI_SCENARIO_BRIEF
+              value: Build a leveraged-buyout model with returns analysis and an audit-ready workbook (.xlsx).
+        kind: hosted
+        name: fsi-pe-lbo-v3
+        protocols:
+            - protocol: responses
+              version: 2.0.0
+infra:
+    provider: microsoft.foundry

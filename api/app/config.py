@@ -1,61 +1,94 @@
-"""Scenario / agent-pipeline configuration and synthetic-data loading."""
+"""Scenario / agent configuration for the v3 hosted-agent BFF.
+
+v3 invokes THREE deployed Foundry hosted agents (fsi-equity-v3 / fsi-ib-pitch-v3 /
+fsi-pe-lbo-v3) over their Responses endpoints in background mode; each agent loads its
+Anthropic skills over toolbox MCP, builds artifacts with native code_interpreter, and its
+ArtifactEgressMiddleware uploads them to the private `artifacts` blob container, appending
+a `<<<ARTIFACT name=<f> blob=<container>/<path>>>>` sentinel to the response text.
+"""
 import os
 from pathlib import Path
 
 PROJECT_ENDPOINT = os.environ.get(
     "PROJECT_ENDPOINT",
-    "https://aif66lhnuec.services.ai.azure.com/api/projects/proj-fsi-demo",
+    "https://aifxzqm33pk.services.ai.azure.com/api/projects/proj-fsi-demo-v3",
 ).rstrip("/")
 
-# Default deployment used by the orchestrator synthesis step.
-SYNTH_MODEL = os.environ.get("SYNTH_MODEL", "gpt-5.1")
+# Private blob storage the hosted agents egress artifacts to; the BFF streams them back.
+STORAGE_BLOB_ENDPOINT = os.environ.get(
+    "STORAGE_BLOB_ENDPOINT", "https://stxzqm33pk.blob.core.windows.net"
+).rstrip("/")
+ARTIFACTS_CONTAINER = os.environ.get("ARTIFACTS_CONTAINER", "artifacts")
+
+# Scenario key -> deployed hosted-agent name. Note equity-research -> fsi-equity-v3.
+AGENT_NAMES = {
+    "equity-research": os.environ.get("AGENT_EQUITY", "fsi-equity-v3"),
+    "ib-pitch": os.environ.get("AGENT_IB", "fsi-ib-pitch-v3"),
+    "pe-lbo": os.environ.get("AGENT_LBO", "fsi-pe-lbo-v3"),
+}
+
+
+def agent_responses_base(scenario_key: str) -> str:
+    """Base URL for a deployed agent's OpenAI-Responses protocol endpoint."""
+    name = AGENT_NAMES[scenario_key]
+    return f"{PROJECT_ENDPOINT}/agents/{name}/endpoint/protocols/openai/responses"
+
 
 DISCLAIMER = (
     "All figures are ILLUSTRATIVE and SYNTHETIC for demo purposes only "
     "(fictional company NovaGrid Technologies and fictional peers). Not investment advice."
 )
 
-# Each scenario runs its specialist agents in order, then the orchestrator synthesizes.
-# Agent names must match agents/definitions/agents-manifest.json (created by create_agents.py).
+# Each scenario is served by ONE deployed Microsoft Agent Framework HOSTED agent that
+# natively loads its bound Anthropic skills (load_skill progressive disclosure over the
+# scenario toolbox MCP) and uses Foundry-native code_interpreter/web_search plus SEC
+# EDGAR public-filing tools backed by the open-source sec-edgar-mcp package.
 SCENARIOS = {
     "equity-research": {
         "title": "Equity Research & Valuation",
         "tagline": "DCF + comparables + integrated 3-statement model for NovaGrid Technologies.",
         "toolbox": "tb-equity-research",
-        "orchestrator": "fsi-orchestrator-equity-research",
-        "steps": [
-            {"agent": "fsi-three-statement-agent", "label": "Building integrated 3-statement model"},
-            {"agent": "fsi-dcf-agent", "label": "Running DCF valuation"},
-            {"agent": "fsi-comps-agent", "label": "Building trading comparables"},
+        "brief": (
+            "Build DCF, trading-comparables, and integrated 3-statement valuation models "
+            "with optional SEC EDGAR public-filing grounding, and deliver an "
+            "institutional-quality Excel valuation package."
+        ),
+        "skills": [
+            "dcf-model", "comps-analysis", "3-statement-model",
+            "xlsx-author", "clean-data-xls", "audit-xls",
         ],
     },
     "ib-pitch": {
         "title": "Investment Banking Pitch",
         "tagline": "Competitive landscape, pitch deck authoring, and deck QC.",
         "toolbox": "tb-ib-pitch",
-        "orchestrator": "fsi-orchestrator-ib-pitch",
-        "steps": [
-            {"agent": "fsi-competitive-analysis-agent", "label": "Analyzing competitive landscape"},
-            {"agent": "fsi-pptx-author-agent", "label": "Authoring pitch deck (.pptx)"},
-            {"agent": "fsi-deck-qc-agent", "label": "Running deck quality control"},
+        "brief": (
+            "Build the competitive landscape, author a client-ready pitch deck (.pptx) with "
+            "supporting comps exhibits, optionally ground public-company claims in SEC EDGAR, "
+            "and run a deck QC pass before delivery."
+        ),
+        "skills": [
+            "competitive-analysis", "comps-analysis", "pptx-author",
+            "ppt-template-creator", "deck-refresh", "ib-check-deck", "xlsx-author",
         ],
     },
     "pe-lbo": {
         "title": "Private Equity LBO Screening",
         "tagline": "LBO model build and model-integrity audit.",
         "toolbox": "tb-pe-lbo",
-        "orchestrator": "fsi-orchestrator-pe-lbo",
-        "steps": [
-            {"agent": "fsi-lbo-agent", "label": "Building LBO model"},
-            {"agent": "fsi-model-audit-agent", "label": "Auditing model integrity"},
-        ],
+        "brief": (
+            "Screen the target as an LBO candidate: build the LBO model (sources & uses, "
+            "debt schedule, returns), optionally ground public-target financials in SEC EDGAR, "
+            "then audit the model's integrity."
+        ),
+        "skills": ["lbo-model", "xlsx-author", "clean-data-xls", "audit-xls"],
     },
 }
 
 DEFAULT_PROMPTS = {
-    "equity-research": "Produce an equity research valuation package for NovaGrid Technologies using the synthetic dataset. Include a base/bull/bear DCF, trading comps vs the peer set, and a triangulated valuation range.",
-    "ib-pitch": "Prepare a concise IB pitch for NovaGrid Technologies: competitive positioning vs peers, a short pitch deck, and a QC pass on the deck.",
-    "pe-lbo": "Screen NovaGrid Technologies as an LBO candidate using the synthetic assumptions. Build the LBO model, estimate returns (IRR/MOIC), and audit the model.",
+    "equity-research": "Produce an equity research valuation package for NovaGrid Technologies using the synthetic dataset. If a real public ticker is provided, use SEC EDGAR for filing-backed financials and cite the filing URLs. Include a base/bull/bear DCF, trading comps vs the peer set, and a triangulated valuation range.",
+    "ib-pitch": "Prepare a concise IB pitch for NovaGrid Technologies: competitive positioning vs peers, a short pitch deck, and a QC pass on the deck. If a real public ticker is provided, use SEC EDGAR for 10-K/10-Q context and cite filing URLs.",
+    "pe-lbo": "Screen NovaGrid Technologies as an LBO candidate using the synthetic assumptions. If a real public ticker is provided, use SEC EDGAR for filing-backed financials and cite filing URLs. Build the LBO model, estimate returns (IRR/MOIC), and audit the model.",
 }
 
 
@@ -96,15 +129,15 @@ DATA_CONTEXT = load_data_context()
 # name/id/version, not the per-version description/tools). Keys match toolbox names.
 TOOLBOX_META = {
     "tb-equity-research": {
-        "description": "Equity research & valuation tools: build DCF / comps / 3-statement models and ground with live web/SEC data.",
-        "tools": ["code_interpreter", "web_search"],
+        "description": "Equity research & valuation tools: build DCF / comps / 3-statement models and ground with SEC EDGAR filings plus live web context.",
+        "tools": ["code_interpreter", "web_search", "sec_edgar_mcp"],
     },
     "tb-ib-pitch": {
-        "description": "IB pitch tools: competitive analysis, PPTX deck authoring, and deck QC with live grounding.",
-        "tools": ["code_interpreter", "web_search"],
+        "description": "IB pitch tools: competitive analysis, PPTX deck authoring, deck QC, and SEC EDGAR public-company filing support.",
+        "tools": ["code_interpreter", "web_search", "sec_edgar_mcp"],
     },
     "tb-pe-lbo": {
-        "description": "PE LBO tools: build LBO models and audit model integrity with live grounding.",
-        "tools": ["code_interpreter", "web_search"],
+        "description": "PE LBO tools: build LBO models, audit model integrity, and use SEC EDGAR for public-target financials where applicable.",
+        "tools": ["code_interpreter", "web_search", "sec_edgar_mcp"],
     },
 }

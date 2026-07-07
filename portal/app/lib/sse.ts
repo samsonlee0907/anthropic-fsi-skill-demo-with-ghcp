@@ -1,15 +1,15 @@
 export type RunEvent =
   | {
       type: 'status';
-      stage: 'start';
+      stage: 'start' | 'submitting' | 'working' | 'retrying' | 'ensuring_artifact';
       scenario: string;
-      title: string;
-      toolbox: string;
+      title?: string;
+      toolbox?: string;
     }
   | {
       type: 'agent_start';
       agent: string;
-      role: 'specialist' | 'orchestrator';
+      role: 'scenario';
       label: string;
     }
   | {
@@ -20,9 +20,10 @@ export type RunEvent =
   | {
       type: 'artifact';
       agent: string;
-      id: string;
+      id: string | null;
       filename: string;
-      url: string;
+      url?: string;
+      error?: string;
     }
   | {
       type: 'error';

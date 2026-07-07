@@ -31,3 +31,9 @@ Thumbs.db
 # Generated artifacts
 fsi_artifacts/
 *.tmp
+
+# Generated deployment outputs (may contain connection strings)
+infra/outputs.json
+
+# editor/backup files
+*.bak
