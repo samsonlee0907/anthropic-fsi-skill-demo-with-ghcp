@@ -31,7 +31,7 @@ param(
     [string]$Location = 'eastus2',
     [string]$SubscriptionId = '',
     [string]$PrincipalId = '',
-    [string]$ModelDeploymentName = 'gpt-5.1',
+    [string]$ModelDeploymentName = 'gpt-5.4',
     [string]$SecEdgarUserAgent = '',
     [switch]$SkipInfra,
     [switch]$SkipSkills,

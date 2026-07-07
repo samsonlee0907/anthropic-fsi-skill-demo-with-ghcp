@@ -14,14 +14,14 @@ param location string = 'eastus2'
 param developerPrincipalId string = ''
 
 @description('Model deployment name the hosted agents run on. MUST match one of the names in modelDeployments (below), or the agents will call a deployment that does not exist.')
-param agentModelDeploymentName string = 'gpt-5.1'
+param agentModelDeploymentName string = 'gpt-5.4'
 
 @description('Model deployments to create on the Foundry account. Override to add models or change capacity/region to fit your quota. Keep the agent model (agentModelDeploymentName) in this list.')
 param modelDeployments array = [
   {
-    name: 'gpt-5.1'
-    model: 'gpt-5.1'
-    version: '2025-11-13'
+    name: 'gpt-5.4'
+    model: 'gpt-5.4'
+    version: '2026-03-05'
     sku: 'GlobalStandard'
     capacity: 150
   }

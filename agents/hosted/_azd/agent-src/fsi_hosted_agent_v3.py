@@ -67,7 +67,7 @@ hosting (equivalent to auto-approving every skill tool).
 Config is entirely env-driven so one image serves all three scenarios:
 
   FOUNDRY_PROJECT_ENDPOINT         project endpoint
-  AZURE_AI_MODEL_DEPLOYMENT_NAME   e.g. gpt-5.1
+  AZURE_AI_MODEL_DEPLOYMENT_NAME   e.g. gpt-5.4
   TOOLBOX_ENDPOINT                 full toolbox MCP URL (preferred), OR
   TOOLBOX_NAME                     toolbox name (endpoint built from project + name)
   STORAGE_BLOB_ENDPOINT            blob endpoint for artifact egress (optional locally)

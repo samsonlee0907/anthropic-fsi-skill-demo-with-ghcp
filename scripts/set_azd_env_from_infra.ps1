@@ -18,7 +18,7 @@ param(
     [Parameter(Mandatory = $true)][string]$ProjectEndpoint,
     [Parameter(Mandatory = $true)][string]$StorageBlobEndpoint,
     [string]$ProjectId = '',
-    [string]$ModelDeploymentName = 'gpt-5.1',
+    [string]$ModelDeploymentName = 'gpt-5.4',
     [string]$SecEdgarMcpUrl = '',
     [string]$FsiMcpKey = '',
     [string]$EnvName = 'fsi-demo',

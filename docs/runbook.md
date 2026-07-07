@@ -31,7 +31,7 @@ All bundled data is synthetic and for demo purposes only.
 ## 2. Prerequisites
 
 - Azure subscription with Foundry model quota in the target region for the deployments in the
-  `modelDeployments` param (default: a single `gpt-5.1` GlobalStandard deployment at 150K TPM).
+  `modelDeployments` param (default: a single `gpt-5.4` GlobalStandard deployment at 150K TPM).
   Add models or change capacity/region via that param to fit your quota; keep
   `agentModelDeploymentName` in the list.
 - `az`, `azd` (with the Foundry agents extension — install with
@@ -55,7 +55,7 @@ All bundled data is synthetic and for demo purposes only.
      --template-file infra/main.bicep `
      --parameters environmentName=<env> location=<location> `
                   developerPrincipalId=<your-object-id> `
-                  agentModelDeploymentName=gpt-5.1
+                  agentModelDeploymentName=gpt-5.4
    ```
 2. **Register skills + create toolboxes** against the new project (uses `PROJECT_ENDPOINT`
    from the infra `AZURE_AI_PROJECT_ENDPOINT` output):
@@ -79,7 +79,7 @@ All bundled data is synthetic and for demo purposes only.
 5. **Map infra outputs into the azd agent environment**:
    ```powershell
    ./scripts/set_azd_env_from_infra.ps1 -ProjectEndpoint <...> -StorageBlobEndpoint <...> `
-     -ModelDeploymentName gpt-5.1 -EnvName <env>
+     -ModelDeploymentName gpt-5.4 -EnvName <env>
    ```
 6. **Deploy the 3 hosted agents** (see §4).
 7. **Grant agent instance-identity RBAC** (see §5).
@@ -267,7 +267,7 @@ az group delete --name rg-<env> --yes --no-wait
 > ```
 >
 > Verify the quota came back with
-> `az cognitiveservices usage list --location <location> --query "[?name.value=='OpenAI.GlobalStandard.gpt-5.1']"`.
+> `az cognitiveservices usage list --location <location> --query "[?name.value=='OpenAI.GlobalStandard.gpt-5.4']"`.
 
 ## 11. Official references
 

@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "325782749340279324"
+      "templateHash": "461447162770492129"
     },
     "description": "FSI Multi-Agent Demo — subscription-scoped deployment: resource group + Foundry + supporting services + Container Apps."
   },
@@ -35,7 +35,7 @@
     },
     "agentModelDeploymentName": {
       "type": "string",
-      "defaultValue": "gpt-5.1",
+      "defaultValue": "gpt-5.4",
       "metadata": {
         "description": "Model deployment name the hosted agents run on. MUST match one of the names in modelDeployments (below), or the agents will call a deployment that does not exist."
       }
@@ -44,9 +44,9 @@
       "type": "array",
       "defaultValue": [
         {
-          "name": "gpt-5.1",
-          "model": "gpt-5.1",
-          "version": "2025-11-13",
+          "name": "gpt-5.4",
+          "model": "gpt-5.4",
+          "version": "2026-03-05",
           "sku": "GlobalStandard",
           "capacity": 150
         }
@@ -296,7 +296,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "4765804992225087041"
+              "templateHash": "14021841399466325700"
             },
             "description": "Azure AI Foundry account (AI Services) + project + serialized model deployments for the FSI multi-agent demo."
           },
@@ -321,9 +321,9 @@
               "type": "array",
               "defaultValue": [
                 {
-                  "name": "gpt-5.1",
-                  "model": "gpt-5.1",
-                  "version": "2025-11-13",
+                  "name": "gpt-5.4",
+                  "model": "gpt-5.4",
+                  "version": "2026-03-05",
                   "sku": "GlobalStandard",
                   "capacity": 150
                 }
