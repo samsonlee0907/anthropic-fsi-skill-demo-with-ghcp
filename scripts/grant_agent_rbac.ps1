@@ -9,9 +9,12 @@
     ArtifactEgressMiddleware can upload generated files). These identities only
     exist after the agents are deployed, so this runs as a post-deploy step.
 
-    Pass the instance principal ids explicitly with -PrincipalIds, or let the script
-    discover user-assigned identities in the resource group. Role assignments are
-    idempotent; re-running is safe.
+    Pass the instance principal ids explicitly with -PrincipalIds, or (preferred) let
+    the script discover them from the Foundry project by passing -ProjectEndpoint and
+    -AgentNames -- each agent's real runtime identity is its per-version
+    `instance_identity.principal_id`, which is NOT a user-assigned identity and does
+    NOT show up in `az identity list`. Role assignments are idempotent; re-running is
+    safe. The instance identity is stable per agent across redeploys.
 
 .NOTES
     To find an agent's principal id if discovery misses it, log the storage-token
@@ -22,6 +25,8 @@ param(
     [Parameter(Mandatory = $true)][string]$ResourceGroup,
     [Parameter(Mandatory = $true)][string]$AiAccountName,
     [Parameter(Mandatory = $true)][string]$StorageAccountName,
+    [string]$ProjectEndpoint = '',
+    [string[]]$AgentNames = @('fsi-equity', 'fsi-ib-pitch', 'fsi-pe-lbo'),
     [string[]]$PrincipalIds = @()
 )
 
@@ -31,8 +36,34 @@ $subId = (az account show --query id -o tsv)
 $aiScope = "/subscriptions/$subId/resourceGroups/$ResourceGroup/providers/Microsoft.CognitiveServices/accounts/$AiAccountName"
 $stScope = "/subscriptions/$subId/resourceGroups/$ResourceGroup/providers/Microsoft.Storage/storageAccounts/$StorageAccountName"
 
+# Preferred: discover each hosted agent's per-version instance identity from the
+# Foundry project. This is the principal the agent runtime actually authenticates as
+# (and the egress middleware uploads blobs as) -- distinct from the RG user-assigned
+# identity that `az identity list` returns.
+if ((-not $PrincipalIds -or $PrincipalIds.Count -eq 0) -and $ProjectEndpoint) {
+    Write-Host "Discovering agent instance identities from $ProjectEndpoint ..."
+    $token = az account get-access-token --resource 'https://ai.azure.com' --query accessToken -o tsv
+    $found = @()
+    foreach ($name in $AgentNames) {
+        try {
+            $uri = "$($ProjectEndpoint.TrimEnd('/'))/agents/$name`?api-version=v1"
+            $resp = Invoke-RestMethod -Method Get -Uri $uri -Headers @{ Authorization = "Bearer $token" }
+            $oid = $resp.versions.latest.instance_identity.principal_id
+            if ($oid) {
+                Write-Host "  $name -> $oid"
+                $found += $oid
+            } else {
+                Write-Warning "  $name: no instance_identity.principal_id found"
+            }
+        } catch {
+            Write-Warning "  $name: lookup failed ($($_.Exception.Message))"
+        }
+    }
+    $PrincipalIds = @($found | Where-Object { $_ })
+}
+
 if (-not $PrincipalIds -or $PrincipalIds.Count -eq 0) {
-    Write-Host "No -PrincipalIds supplied; discovering user-assigned identities in $ResourceGroup ..."
+    Write-Host "Falling back to user-assigned identity discovery in $ResourceGroup ..."
     $ids = az identity list -g $ResourceGroup --query "[].principalId" -o tsv
     $PrincipalIds = @($ids | Where-Object { $_ })
 }

@@ -162,13 +162,29 @@ $env:PROJECT_ENDPOINT = $projectEndpoint
 Write-Host "  project=$projectEndpoint"
 Write-Host "  rg=$rg acr=$acrName api=$apiUrl"
 
+# Guard: an Azure Policy 'modify' effect can flip storage publicNetworkAccess to
+# Disabled at ARM-create time even though the bicep sets Enabled. With no private
+# endpoints for the (VNet-less) hosted-agent compute + Container Apps, that breaks
+# artifact egress with an AuthorizationFailure that looks exactly like a missing RBAC
+# role. Re-assert Enabled here so the egress path stays reachable over AAD-gated public.
+if (-not $SkipInfra) {
+    $pna = az storage account show -n $storageAccount -g $rg --query publicNetworkAccess -o tsv 2>$null
+    if ($pna -and $pna -ne 'Enabled') {
+        Write-Host "  [guard] storage publicNetworkAccess=$pna; re-enabling ..." -ForegroundColor Yellow
+        az storage account update -n $storageAccount -g $rg --public-network-access Enabled 1>$null 2>$null
+        Assert-LastExit 'az storage account update (publicNetworkAccess)'
+    }
+}
+
 # ---------------------------------------------------------------------------
 # 2. Register skills + create toolboxes
 # ---------------------------------------------------------------------------
 if (-not $SkipSkills) {
     Write-Host "== 2. Registering skills + toolboxes ==" -ForegroundColor Cyan
     python (Join-Path $repo 'agents\scripts\provision_skills.py')
+    Assert-LastExit "Skill registration (provision_skills.py)"
     python (Join-Path $repo 'agents\scripts\create_toolboxes.py')
+    Assert-LastExit "Toolbox creation (create_toolboxes.py)"
 }
 
 # ---------------------------------------------------------------------------
@@ -197,6 +213,7 @@ if ($SecEdgarUserAgent -and -not $SkipSecEdgar) {
 if (-not $SkipSkills) {
     Write-Host "== 4. Binding skills to toolboxes ==" -ForegroundColor Cyan
     python (Join-Path $repo 'agents\scripts\bind_skills_to_toolboxes.py')
+    Assert-LastExit "Skill-to-toolbox binding (bind_skills_to_toolboxes.py)"
 }
 
 # ---------------------------------------------------------------------------
@@ -243,7 +260,8 @@ if (-not $SkipAgents) {
     # 7. Grant agent instance-identity RBAC (identities exist only after deploy).
     Write-Host "== 7. Granting agent RBAC ==" -ForegroundColor Cyan
     & (Join-Path $repo 'scripts\grant_agent_rbac.ps1') `
-        -ResourceGroup $rg -AiAccountName $aiAccount -StorageAccountName $storageAccount
+        -ResourceGroup $rg -AiAccountName $aiAccount -StorageAccountName $storageAccount `
+        -ProjectEndpoint $projectEndpoint -AgentNames @('fsi-equity', 'fsi-ib-pitch', 'fsi-pe-lbo')
 }
 
 # ---------------------------------------------------------------------------

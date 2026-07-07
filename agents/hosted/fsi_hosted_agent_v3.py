@@ -274,7 +274,51 @@ def _sec_edgar_mcp_tool(client):
     )
 
 
-def build_agent(credential: DefaultAzureCredential | None = None) -> tuple[Agent, FoundryToolbox]:
+async def _prewarm_skills(provider) -> None:
+    """Fetch + cache every toolbox skill's body at startup, while the toolbox MCP
+    session is freshly connected in THIS task.
+
+    Why this exists: ``as_skills_provider()`` builds ``MCPSkill`` objects bound to the
+    toolbox's long-lived MCP ``ClientSession`` (opened by ``async with toolbox:`` in
+    ``main()``). ``load_skill`` calls ``MCPSkill.get_content()``, which issues a
+    ``resources/read`` on that session. In the deployed :class:`ResponsesHostServer` the
+    per-request agent invocation runs in a DIFFERENT asyncio task than the one that
+    opened the session, so that request-time ``resources/read`` fails and the tool
+    returns the opaque ``"Error: Function failed."`` -- the model then gives up and
+    hallucinates file creation instead of running code_interpreter.
+
+    ``MCPSkill.get_content()`` caches its result (``self._content``) after the first
+    successful read, and ``SkillsProvider`` caches its context (the same ``MCPSkill``
+    instances) across runs when ``disable_caching=False`` (our default). So reading each
+    skill's content ONCE here at startup -- in the same task that owns the session, which
+    a direct MCP probe confirms works -- populates those caches. Every later
+    ``load_skill`` then returns the cached body with no request-time session read, which
+    is what makes skills actually usable in the hosted runtime.
+    """
+    get_ctx = getattr(provider, "_get_or_create_context", None)
+    if get_ctx is None:  # pragma: no cover - SDK shape guard
+        logger.warning("skill prewarm: provider has no _get_or_create_context; skipping")
+        return
+    try:
+        skills, _instructions, _tools = await get_ctx()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("skill prewarm: skill discovery failed: %s", e)
+        return
+    warmed = 0
+    for skill in skills:
+        name = getattr(getattr(skill, "frontmatter", None), "name", "?")
+        try:
+            body = await skill.get_content()
+            warmed += 1
+            logger.info("skill prewarm: cached '%s' (%d chars)", name, len(body or ""))
+        except Exception as e:  # noqa: BLE001
+            logger.warning("skill prewarm: '%s' failed: %s", name, e)
+    logger.info("skill prewarm: %d/%d skill bodies cached", warmed, len(skills))
+
+
+def build_agent(
+    credential: DefaultAzureCredential | None = None,
+) -> tuple[Agent, FoundryToolbox, object]:
     """Construct the scenario hosted agent from environment configuration.
 
     Returns the agent and its toolbox. The caller MUST enter the returned toolbox as an
@@ -357,11 +401,11 @@ def build_agent(credential: DefaultAzureCredential | None = None) -> tuple[Agent
         # canonical hosted samples. Overridable via FSI_STORE for experimentation.
         default_options={"store": _env_bool("FSI_STORE", default=False)},
     )
-    return agent, toolbox
+    return agent, toolbox, skills_provider
 
 
 async def main() -> None:
-    agent, toolbox = build_agent()
+    agent, toolbox, skills_provider = build_agent()
     port = int(os.environ.get("PORT", "8088"))
     logger.info(
         "starting FSI hosted agent '%s' on :%d",
@@ -374,6 +418,11 @@ async def main() -> None:
     # the Responses tool surface, so the native code_interpreter/web_search hosted tools
     # are not suppressed.
     async with toolbox:
+        # Pre-fetch + cache every skill body now, while the freshly-connected session is
+        # owned by THIS task. Without this, the first request-time load_skill runs in a
+        # different task and its MCP resources/read fails ("Error: Function failed."),
+        # so the model hallucinates instead of using the skill + code_interpreter.
+        await _prewarm_skills(skills_provider)
         server = ResponsesHostServer(agent)
         await server.run_async(port=port)
 

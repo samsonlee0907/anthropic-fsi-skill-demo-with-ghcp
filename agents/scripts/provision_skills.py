@@ -27,6 +27,7 @@ import os
 import re
 import sys
 import time
+import urllib.error
 import urllib.request
 
 from azure.ai.projects import AIProjectClient
@@ -68,10 +69,44 @@ _FRONTMATTER = re.compile(
 )
 
 
-def fetch_skill_md(name: str) -> str:
+def fetch_skill_md(name: str, attempts: int = 6) -> str:
+    """Fetch a skill's SKILL.md from pinned GitHub raw, retrying transient errors.
+
+    raw.githubusercontent.com rate-limits (HTTP 429) when many files are fetched in
+    quick succession, which previously left skills unregistered (the delete/create
+    retry loop below does NOT cover this network fetch). Retry 429/5xx with
+    exponential backoff, honoring Retry-After, and send an explicit User-Agent.
+    """
     url = f"{RAW_BASE}/{name}/SKILL.md"
-    with urllib.request.urlopen(url) as resp:
-        return resp.read().decode("utf-8")
+    last_err: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "fsi-skill-provisioner"})
+            with urllib.request.urlopen(req) as resp:
+                return resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code in (429, 500, 502, 503, 504) and attempt < attempts:
+                retry_after = e.headers.get("Retry-After") if e.headers else None
+                delay = (
+                    float(retry_after)
+                    if retry_after and str(retry_after).isdigit()
+                    else min(2 ** attempt, 30)
+                )
+                print(f"[fetch retry {attempt}/{attempts}] {name}: HTTP {e.code}; sleeping {delay:.0f}s")
+                time.sleep(delay)
+                continue
+            raise
+        except urllib.error.URLError as e:  # transient DNS/connection issues
+            last_err = e
+            if attempt < attempts:
+                delay = min(2 ** attempt, 30)
+                print(f"[fetch retry {attempt}/{attempts}] {name}: {str(e)[:80]}; sleeping {delay:.0f}s")
+                time.sleep(delay)
+                continue
+            raise
+    assert last_err is not None
+    raise last_err
 
 
 def parse_skill(raw: str, fallback_name: str) -> tuple[str, str, str]:
@@ -94,8 +129,20 @@ def main() -> int:
         credential=DefaultAzureCredential(),
         allow_preview=True,
     )
+    # Optional: register only a subset (comma-separated skill names). Useful for
+    # healing a partial run without deleting/recreating the skills that already
+    # registered (and that other toolboxes reference).
+    only = os.environ.get("SKILLS_ONLY", "").strip()
+    skills = RUNTIME_SKILLS
+    if only:
+        wanted = {s.strip() for s in only.split(",") if s.strip()}
+        skills = [s for s in RUNTIME_SKILLS if s in wanted]
+        unknown = wanted - set(RUNTIME_SKILLS)
+        if unknown:
+            print(f"[WARN] SKILLS_ONLY names not in RUNTIME_SKILLS (ignored): {sorted(unknown)}")
+        print(f"[info] SKILLS_ONLY set; registering {len(skills)}: {skills}")
     ok = True
-    for skill in RUNTIME_SKILLS:
+    for skill in skills:
         try:
             raw = fetch_skill_md(skill)
             name, desc, body = parse_skill(raw, skill)
