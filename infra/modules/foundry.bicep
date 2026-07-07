@@ -15,20 +15,6 @@ param modelDeployments array = [
     sku: 'GlobalStandard'
     capacity: 150
   }
-  {
-    name: 'gpt-5.4-mini'
-    model: 'gpt-5.4-mini'
-    version: '2026-03-17'
-    sku: 'GlobalStandard'
-    capacity: 150
-  }
-  {
-    name: 'text-embedding-3-large'
-    model: 'text-embedding-3-large'
-    version: '1'
-    sku: 'Standard'
-    capacity: 50
-  }
 ]
 
 resource account 'Microsoft.CognitiveServices/accounts@2026-05-01' = {
@@ -86,6 +72,7 @@ output aiAccountName string = account.name
 output aiAccountId string = account.id
 output aiAccountPrincipalId string = account.identity.principalId
 output projectName string = project.name
+output projectId string = project.id
 output projectPrincipalId string = project.identity.principalId
 // Foundry Agent Service / project data-plane endpoint
 output projectEndpoint string = 'https://${account.name}.services.ai.azure.com/api/projects/${project.name}'

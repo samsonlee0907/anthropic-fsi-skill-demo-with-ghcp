@@ -13,8 +13,19 @@ param location string = 'eastus2'
 @description('Object ID of a user/group to also grant Foundry data-plane access (optional, for portal testing in ai.azure.com).')
 param developerPrincipalId string = ''
 
-@description('Model deployment name the hosted agents run on. Must match one of the deployments created on the Foundry account.')
+@description('Model deployment name the hosted agents run on. MUST match one of the names in modelDeployments (below), or the agents will call a deployment that does not exist.')
 param agentModelDeploymentName string = 'gpt-5.1'
+
+@description('Model deployments to create on the Foundry account. Override to add models or change capacity/region to fit your quota. Keep the agent model (agentModelDeploymentName) in this list.')
+param modelDeployments array = [
+  {
+    name: 'gpt-5.1'
+    model: 'gpt-5.1'
+    version: '2025-11-13'
+    sku: 'GlobalStandard'
+    capacity: 150
+  }
+]
 
 var resourceGroupName = 'rg-${environmentName}'
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
@@ -62,6 +73,7 @@ module foundry 'modules/foundry.bicep' = {
     tags: tags
     aiAccountName: 'aif${shortToken}'
     projectName: 'proj-${environmentName}'
+    modelDeployments: modelDeployments
   }
 }
 
@@ -123,9 +135,6 @@ module foundryRbacDev 'modules/foundry-rbac.bicep' = if (!empty(developerPrincip
 module containerApps 'modules/containerapps.bicep' = {
   scope: rg
   name: 'container-apps'
-  dependsOn: [
-    monitoring
-  ]
   params: {
     location: location
     tags: tags
@@ -149,6 +158,7 @@ output AZURE_RESOURCE_GROUP string = rg.name
 output AZURE_LOCATION string = location
 output AZURE_AI_ACCOUNT_NAME string = foundry.outputs.aiAccountName
 output AZURE_AI_PROJECT_NAME string = foundry.outputs.projectName
+output AZURE_AI_PROJECT_ID string = foundry.outputs.projectId
 output AZURE_AI_PROJECT_ENDPOINT string = foundry.outputs.projectEndpoint
 output AZURE_AI_ACCOUNT_ENDPOINT string = foundry.outputs.accountEndpoint
 output AZURE_AI_MODEL_DEPLOYMENT_NAME string = agentModelDeploymentName

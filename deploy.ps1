@@ -46,9 +46,56 @@ $repo = $PSScriptRoot
 $azdDir = Join-Path $repo 'agents\hosted\_azd'
 $hostedDir = Join-Path $repo 'agents\hosted'
 
+# Best-effort UTF-8 for our own console output. NOTE: this does NOT fix `az acr build`
+# log streaming -- az launches `python.exe -I` (isolated) which ignores PYTHONUTF8, so
+# that path is handled separately by Invoke-AcrBuild (status polling, no log streaming).
+$env:PYTHONIOENCODING = 'utf-8'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+
 function Require-Tool([string]$name) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
         throw "Required tool '$name' not found on PATH."
+    }
+}
+
+# Throw on non-zero exit of the most recent native command (az/azd don't raise
+# terminating errors, so $ErrorActionPreference='Stop' does NOT catch them).
+function Assert-LastExit([string]$what) {
+    if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE)." }
+}
+
+# Build an image in ACR without depending on log streaming.
+# `az acr build` streams server-side build logs and, on Windows, crashes with a
+# cosmetic `UnicodeEncodeError` (colorama writing UTF-8 to a cp1252 stdout). Because
+# `az.cmd` launches `python.exe -I` (isolated mode), PYTHONUTF8/PYTHONIOENCODING are
+# ignored and the console code page can't fix a piped stream -- so we cannot prevent
+# the crash. Instead: capture the queued run id (printed before any crash), ignore the
+# cosmetic streaming failure, and poll the run status authoritatively (that call does
+# not stream logs). This is portable across OS and console code pages.
+function Invoke-AcrBuild {
+    param(
+        [string]$Registry,
+        [string]$Image,
+        [string]$Context,
+        [string[]]$BuildArgs = @()
+    )
+    $cmd = @('acr', 'build', '--registry', $Registry, '--image', $Image)
+    foreach ($ba in $BuildArgs) { $cmd += @('--build-arg', $ba) }
+    $cmd += $Context
+    $out = az @cmd 2>&1 | Out-String
+    $runId = [regex]::Match($out, 'Queued a build with ID:\s*(\S+)').Groups[1].Value
+    if (-not $runId) {
+        Write-Host $out
+        throw "az acr build ($Image) failed before a run was queued."
+    }
+    Write-Host "  ACR build $runId queued for $Image; polling status..."
+    while ($true) {
+        $status = az acr task show-run --registry $Registry --run-id $runId --query status -o tsv 2>$null
+        switch ($status) {
+            'Succeeded' { Write-Host "  ACR build $runId Succeeded."; return }
+            { $_ -in 'Failed', 'Error', 'Canceled', 'Timeout' } { throw "ACR build $runId ($Image) ended: $status" }
+        }
+        Start-Sleep 5
     }
 }
 
@@ -63,21 +110,26 @@ az config set auth.useAzCliAuth true 2>$null | Out-Null
 # ---------------------------------------------------------------------------
 if (-not $SkipInfra) {
     Write-Host "== 1. Provisioning infra ($EnvName / $Location) ==" -ForegroundColor Cyan
-    $dep = az deployment sub create `
+    $depJson = az deployment sub create `
         --name "fsi-$EnvName" `
         --location $Location `
         --template-file (Join-Path $repo 'infra\main.bicep') `
         --parameters environmentName=$EnvName location=$Location `
                      developerPrincipalId=$PrincipalId `
                      agentModelDeploymentName=$ModelDeploymentName `
-        -o json | ConvertFrom-Json
+        -o json
+    Assert-LastExit 'az deployment sub create'
+    $dep = $depJson | ConvertFrom-Json
 } else {
     Write-Host "== 1. Reading existing infra outputs ==" -ForegroundColor Cyan
-    $dep = az deployment sub show --name "fsi-$EnvName" -o json | ConvertFrom-Json
+    $depJson = az deployment sub show --name "fsi-$EnvName" -o json
+    Assert-LastExit 'az deployment sub show'
+    $dep = $depJson | ConvertFrom-Json
 }
 
 $o = $dep.properties.outputs
 $projectEndpoint  = $o.AZURE_AI_PROJECT_ENDPOINT.value
+$projectId        = $o.AZURE_AI_PROJECT_ID.value
 $storageBlob      = $o.AZURE_STORAGE_BLOB_ENDPOINT.value
 $rg               = $o.AZURE_RESOURCE_GROUP.value
 $acrName          = $o.AZURE_CONTAINER_REGISTRY_NAME.value
@@ -133,6 +185,7 @@ if (-not $SkipSkills) {
 Write-Host "== 5. Configuring azd agent environment ==" -ForegroundColor Cyan
 $fsiMcpKey = & (Join-Path $repo 'scripts\set_azd_env_from_infra.ps1') `
     -ProjectEndpoint $projectEndpoint -StorageBlobEndpoint $storageBlob `
+    -ProjectId $projectId `
     -ModelDeploymentName $ModelDeploymentName -SecEdgarMcpUrl $secMcpUrl `
     -FsiMcpKey $fsiMcpKey -EnvName $EnvName -AzdDir $azdDir | Select-Object -Last 1
 Push-Location $azdDir
@@ -178,16 +231,18 @@ if (-not $SkipAgents) {
 # ---------------------------------------------------------------------------
 if (-not $SkipApps) {
     Write-Host "== 8. Building + deploying API and portal ==" -ForegroundColor Cyan
-    az acr build --registry $acrName --image fsi-api:latest (Join-Path $repo 'api') | Out-Null
+    Invoke-AcrBuild -Registry $acrName -Image 'fsi-api:latest' -Context (Join-Path $repo 'api')
     az containerapp update -n "ca-api-$EnvName" -g $rg `
         --image "$acrName.azurecr.io/fsi-api:latest" `
         --revision-suffix ("v" + (Get-Date -Format 'MMddHHmmss')) | Out-Null
+    Assert-LastExit 'az containerapp update (api)'
 
-    az acr build --registry $acrName --image fsi-portal:latest `
-        --build-arg NEXT_PUBLIC_API_BASE_URL=$apiUrl (Join-Path $repo 'portal') | Out-Null
+    Invoke-AcrBuild -Registry $acrName -Image 'fsi-portal:latest' -Context (Join-Path $repo 'portal') `
+        -BuildArgs @("NEXT_PUBLIC_API_BASE_URL=$apiUrl")
     az containerapp update -n "ca-portal-$EnvName" -g $rg `
         --image "$acrName.azurecr.io/fsi-portal:latest" `
         --revision-suffix ("v" + (Get-Date -Format 'MMddHHmmss')) | Out-Null
+    Assert-LastExit 'az containerapp update (portal)'
 }
 
 # ---------------------------------------------------------------------------

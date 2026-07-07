@@ -30,11 +30,16 @@ All bundled data is synthetic and for demo purposes only.
 
 ## 2. Prerequisites
 
-- Azure subscription with Foundry model quota in the target region for the deployments in
-  `infra/modules/foundry.bicep` (`gpt-5.1`, `gpt-5.4-mini`, `text-embedding-3-large` by
-  default; adjust the `modelDeployments` param as needed).
-- `az`, `azd` (with the `azure.ai.agent` capability), `gh` (authenticated), Python 3.11+.
+- Azure subscription with Foundry model quota in the target region for the deployments in the
+  `modelDeployments` param (default: a single `gpt-5.1` GlobalStandard deployment at 150K TPM).
+  Add models or change capacity/region via that param to fit your quota; keep
+  `agentModelDeploymentName` in the list.
+- `az`, `azd` (with the `azure.ai.agent` capability — enable it with
+  `azd extension install microsoft.azd.ai.agent`, verify with `azd ai agent --help`),
+  `gh` (authenticated), Python 3.11+.
 - `az login`; `pip install azure-ai-projects azure-identity`.
+- `deploy.ps1` auto-derives your object ID via `az ad signed-in-user show`; pass `-PrincipalId`
+  only to override (or when running the raw `az deployment` path with `developerPrincipalId`).
 
 ## 3. End-to-end deploy (what `deploy.ps1` does)
 
@@ -190,16 +195,34 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   outer response.
 - **Framework instrumentation is intentionally disabled** in the runtime (a core-1.10.0
   span-attr serialization bug crashes on `AutoCodeInterpreterToolParam`).
-- **`azd` credential lookups flake** (`AzureCLICredential: exit status 1`) under back-to-back
+- **`az` credential lookups flake** (`AzureCLICredential: exit status 1`) under back-to-back
   deploys. Deploy one service at a time and retry — `deploy.ps1` retries up to 3×.
+- **`az acr build` crashes cosmetically on Windows** with `UnicodeEncodeError: 'charmap'
+  codec can't encode ...` while streaming the server-side build logs. `az.cmd` launches
+  `python.exe -I` (isolated mode), so `PYTHONUTF8`/`PYTHONIOENCODING` are ignored and (because
+  the output is piped) `chcp 65001` cannot help either. The build itself SUCCEEDS server-side —
+  only the log stream crashes, and the non-zero exit makes it look like a build failure.
+  `deploy.ps1` avoids this entirely: `Invoke-AcrBuild` captures the queued run id (printed before
+  the crash), ignores the cosmetic streaming failure, and polls `az acr task show-run` for the
+  authoritative status. If you build manually, verify with
+  `az acr task list-runs --registry <acr> --top 1 -o table` instead of trusting the exit code.
 - **SEC EDGAR (optional):** requires `SEC_EDGAR_USER_AGENT` (a real contact string) on the MCP
   Container App; the Foundry gateway injects the shared-secret header (`x-fsi-mcp-key`).
   Toggle by setting/clearing `SEC_EDGAR_MCP_URL`. Upstream `sec-edgar-mcp` is AGPL-3.0 —
   review licensing before commercial redistribution.
 - **Transient model errors:** heavy single prompts (deep SEC retrieval + full multi-sheet
   DCF) can 408-timeout at the model layer (~360s). The BFF mitigates with one retry, one
-  corrective artifact turn, and finally a valid one-sheet `.xlsx` fallback so the portal
-  always has a downloadable file. That fallback is demo resilience, not the primary path.
+  corrective artifact turn, and finally a **type-correct** fallback so the portal always has a
+  downloadable file whose type matches the scenario — a `.pptx` deck for `ib-pitch`, a `.xlsx`
+  workbook for the equity/LBO scenarios (built dependency-free in `orchestrator.py`). That
+  fallback is demo resilience, not the primary path.
+- **Transient 500 on the poll GET:** the BFF submits agent runs in background mode
+  (`store=true`) and polls `GET .../responses/{id}`. The Foundry gateway occasionally returns a
+  cosmetic `500` (or `429`/`502`/`503`/`504`) on an otherwise-healthy in-progress run. Because the
+  run is stored server-side, re-reading its status is idempotent, so `_poll_once_sync` retries
+  transient 5xx/429 and network errors in place (5 attempts, linear backoff) instead of failing the
+  scenario. A single un-retried `500` on the poll — not a real run failure — is what previously
+  caused sporadic 1/3 or 2/3 validation results.
 
 ## 9. Moving from synthetic data to live vendor data
 

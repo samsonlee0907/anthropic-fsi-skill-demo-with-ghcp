@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "13441847407179532956"
+      "templateHash": "325782749340279324"
     },
     "description": "FSI Multi-Agent Demo — subscription-scoped deployment: resource group + Foundry + supporting services + Container Apps."
   },
@@ -37,7 +37,22 @@
       "type": "string",
       "defaultValue": "gpt-5.1",
       "metadata": {
-        "description": "Model deployment name the hosted agents run on. Must match one of the deployments created on the Foundry account."
+        "description": "Model deployment name the hosted agents run on. MUST match one of the names in modelDeployments (below), or the agents will call a deployment that does not exist."
+      }
+    },
+    "modelDeployments": {
+      "type": "array",
+      "defaultValue": [
+        {
+          "name": "gpt-5.1",
+          "model": "gpt-5.1",
+          "version": "2025-11-13",
+          "sku": "GlobalStandard",
+          "capacity": 150
+        }
+      ],
+      "metadata": {
+        "description": "Model deployments to create on the Foundry account. Override to add models or change capacity/region to fit your quota. Keep the agent model (agentModelDeploymentName) in this list."
       }
     }
   },
@@ -269,6 +284,9 @@
           },
           "projectName": {
             "value": "[format('proj-{0}', parameters('environmentName'))]"
+          },
+          "modelDeployments": {
+            "value": "[parameters('modelDeployments')]"
           }
         },
         "template": {
@@ -278,7 +296,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "9711235546229868372"
+              "templateHash": "4765804992225087041"
             },
             "description": "Azure AI Foundry account (AI Services) + project + serialized model deployments for the FSI multi-agent demo."
           },
@@ -308,20 +326,6 @@
                   "version": "2025-11-13",
                   "sku": "GlobalStandard",
                   "capacity": 150
-                },
-                {
-                  "name": "gpt-5.4-mini",
-                  "model": "gpt-5.4-mini",
-                  "version": "2026-03-17",
-                  "sku": "GlobalStandard",
-                  "capacity": 150
-                },
-                {
-                  "name": "text-embedding-3-large",
-                  "model": "text-embedding-3-large",
-                  "version": "1",
-                  "sku": "Standard",
-                  "capacity": 50
                 }
               ],
               "metadata": {
@@ -410,6 +414,10 @@
             "projectName": {
               "type": "string",
               "value": "[parameters('projectName')]"
+            },
+            "projectId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('aiAccountName'), parameters('projectName'))]"
             },
             "projectPrincipalId": {
               "type": "string",
@@ -1241,6 +1249,10 @@
     "AZURE_AI_PROJECT_NAME": {
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.projectName.value]"
+    },
+    "AZURE_AI_PROJECT_ID": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.projectId.value]"
     },
     "AZURE_AI_PROJECT_ENDPOINT": {
       "type": "string",

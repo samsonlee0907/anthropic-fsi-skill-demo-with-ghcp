@@ -17,6 +17,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$ProjectEndpoint,
     [Parameter(Mandatory = $true)][string]$StorageBlobEndpoint,
+    [string]$ProjectId = '',
     [string]$ModelDeploymentName = 'gpt-5.1',
     [string]$SecEdgarMcpUrl = '',
     [string]$FsiMcpKey = '',
@@ -33,8 +34,12 @@ $AzdDir = (Resolve-Path $AzdDir).Path
 # The FoundryToolbox preview consumes the toolbox over its MCP endpoint. It is
 # derived from the project endpoint + toolbox name in ONE place here; adjust this
 # single function if the preview MCP path changes.
+# NOTE: the `?api-version=v1` query string is REQUIRED — Foundry returns HTTP 400
+# without it, and the SDK uses TOOLBOX_ENDPOINT verbatim (only its own fallback
+# builder appends api-version). Verified against agent-framework-foundry-hosting
+# 1.0.0a260630 _toolbox.py and a live 424/400 startup crash without it.
 function Get-ToolboxEndpoint([string]$name) {
-    return "$ProjectEndpoint/toolboxes/$name/mcp"
+    return "$ProjectEndpoint/toolboxes/$name/mcp?api-version=v1"
 }
 
 # --- Ensure the azd environment exists ------------------------------------
@@ -58,6 +63,7 @@ try {
 
     $vars = [ordered]@{
         FOUNDRY_PROJECT_ENDPOINT       = $ProjectEndpoint
+        AZURE_AI_PROJECT_ID            = $ProjectId
         AZURE_AI_MODEL_DEPLOYMENT_NAME = $ModelDeploymentName
         TOOLBOX_ENDPOINT_EQUITY        = (Get-ToolboxEndpoint 'tb-equity-research')
         TOOLBOX_ENDPOINT_IB            = (Get-ToolboxEndpoint 'tb-ib-pitch')
