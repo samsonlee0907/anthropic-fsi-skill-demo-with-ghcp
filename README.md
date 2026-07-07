@@ -131,8 +131,11 @@ flowchart LR
    commit and bound to toolboxes — never pasted into static prompts. The runtime consumes
    them via `FoundryToolbox.as_skills_provider()` + `load_skill`.
 3. **Use native Foundry tools for execution.** `code_interpreter` and `web_search` come from
-   the project client (the preview toolbox Code Interpreter returns server-side 500s). The
-   toolbox stays the governed, portal-visible catalog.
+   the project client (the preview toolbox Code Interpreter returns server-side 500s). They are
+   ALSO listed in each scenario toolbox as the unified, governed, portal-visible **catalog**
+   (tools + skills), but the runtime consumes the toolbox as a skills provider only
+   (`load_tools=False`) and executes those two tools natively — so cataloguing them does not
+   change runtime execution or reintroduce the preview defects.
 4. **SEC EDGAR is a self-hosted remote MCP tool**, not in-container code. It runs as its own
    Container App and is attached as a Foundry-native remote MCP tool; the gateway injects a
    shared-secret header, so the endpoint is unusable without the key.

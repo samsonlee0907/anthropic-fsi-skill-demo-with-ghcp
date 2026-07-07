@@ -94,21 +94,30 @@ def _sec_edgar_mcp_tool() -> dict | None:
 
 
 def _base_tools() -> list[dict]:
-    """Tools every scenario toolbox carries: the self-hosted SEC EDGAR MCP server.
+    """Governed-catalog tools every scenario toolbox carries.
 
-    NOTE 1: toolbox-MCP `code_interpreter` returns a reproducible server-side 500
-    (preview defect), so it is NOT bound here. Hosted agents get code_interpreter
-    from the Foundry-native Responses sandbox
-    (FoundryChatClient.get_code_interpreter_tool).
+    The toolbox is the SINGLE governed catalog per scenario, so it lists all three
+    shared Foundry tools -- `code_interpreter`, `web_search`, and (when configured)
+    the self-hosted SEC EDGAR MCP server -- alongside the scenario's skills. This
+    gives one unified, portal-visible tool + skill inventory per scenario.
 
-    NOTE 2: `web_search` is intentionally NOT bound to the toolbox. Surfacing the
-    toolbox `web` MCP tool to the Responses API (via FoundryToolbox(load_tools=True))
-    makes the /responses turn after a `load_skill` fail with a server-side
-    RemoteProtocolError in preview. Hosted agents therefore ground with the reliable
-    Foundry-native `web_search` tool, and the toolbox stays the governed catalog for
-    skills + the SEC EDGAR MCP tool (which the agents consume via load_tools=True).
+    IMPORTANT -- catalog vs. runtime execution: binding `code_interpreter` /
+    `web_search` here makes them part of the governed CATALOG only. The hosted-agent
+    runtime (fsi_hosted_agent_v3.py) consumes this toolbox as a SKILLS provider
+    (`as_skills_provider()`, `load_tools=False`) and EXECUTES `code_interpreter` /
+    `web_search` as the reliable Foundry-native hosted tools. It never invokes them
+    THROUGH the toolbox MCP, so listing them here does NOT reintroduce the preview
+    defects (toolbox-MCP `code_interpreter` 500 / post-`load_skill`
+    RemoteProtocolError) and does NOT suppress the native hosted tools. Catalog and
+    runtime stay consistent with no regression.
+
+    SEC EDGAR IS consumed through the toolbox at runtime (as a hosted remote-MCP
+    tool), so it is a real, callable catalog entry when SEC_EDGAR_MCP_URL is set.
     """
-    tools: list[dict] = []
+    tools: list[dict] = [
+        {"type": "code_interpreter"},
+        {"type": "web_search", "name": "web"},
+    ]
     sec = _sec_edgar_mcp_tool()
     if sec:
         tools.append(sec)
@@ -155,6 +164,8 @@ def main() -> int:
     ok = True
     base_tools = _base_tools()
     has_sec = any(t.get("type") == "mcp" and t.get("server_label") == "sec_edgar" for t in base_tools)
+    tool_types = [t.get("server_label") if t.get("type") == "mcp" else t.get("type") for t in base_tools]
+    print(f"[info] toolbox catalog tools: {tool_types}")
     print(f"[info] SEC EDGAR MCP tool {'BOUND' if has_sec else 'OMITTED (SEC_EDGAR_MCP_URL unset)'}")
     for name, (desc, skills) in TOOLBOXES.items():
         try:

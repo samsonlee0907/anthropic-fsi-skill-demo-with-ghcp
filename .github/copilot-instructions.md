@@ -24,8 +24,11 @@ All bundled data is synthetic and for demo purposes only.
    `FoundryToolbox.as_skills_provider()` + `load_skill` (progressive disclosure over MCP).
 3. **Use native Foundry tools for execution.** `code_interpreter` and `web_search` come from
    `FoundryChatClient` (native), NOT the toolbox MCP tool of the same name -- the preview toolbox
-   Code Interpreter returns server-side 500s. Toolboxes remain the governed, portal-visible skill
-   catalog.
+   Code Interpreter returns server-side 500s. Both are ALSO listed in each scenario toolbox so the
+   toolbox is the single unified, governed, portal-visible **catalog** (tools + skills), but the
+   runtime consumes the toolbox as a skills provider only (`load_tools=False`) and executes those
+   two tools natively -- cataloguing them does not change runtime execution or reintroduce the
+   preview `load_tools=True` defects (post-`load_skill` RemoteProtocolError / native-tool suppression).
 4. **SEC EDGAR is a self-hosted REMOTE MCP tool**, not in-container code. `stefanoamorelli/sec-edgar-mcp`
    runs as its own Container App (built from `agents/mcp/sec-edgar`); the agents attach it as a
    Foundry-native remote MCP tool and the gateway injects a shared-secret header (`x-fsi-mcp-key`).

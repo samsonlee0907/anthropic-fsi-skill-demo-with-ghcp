@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { consumeSseStream, type RunEvent } from '../lib/sse';
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
@@ -88,6 +90,11 @@ export function Studio() {
   const selectedScenario = useMemo(
     () => scenarios.find((scenario) => scenario.key === selectedKey) ?? null,
     [scenarios, selectedKey]
+  );
+
+  const selectedToolbox = useMemo(
+    () => (selectedScenario ? toolboxes.find((tb) => tb.name === selectedScenario.toolbox) ?? null : null),
+    [toolboxes, selectedScenario]
   );
 
   const elapsedMs = startedAt ? (isRunning ? clock : finishedAt ?? clock) - startedAt : 0;
@@ -387,7 +394,7 @@ export function Studio() {
 
             {selectedScenario ? (
               <div className="promptComposer">
-                <div className="skillLibrary" aria-label="Skills available to this agent">
+                <div className="skillLibrary" aria-label="Skills and tools available to this agent">
                   <span className="skillLibraryLabel">Skills in toolbox</span>
                   <span className="chipRow">
                     {selectedScenario.skills.map((skill) => (
@@ -396,6 +403,18 @@ export function Studio() {
                       </span>
                     ))}
                   </span>
+                  {selectedToolbox?.tools && selectedToolbox.tools.length > 0 ? (
+                    <>
+                      <span className="skillLibraryLabel">Tools in toolbox</span>
+                      <span className="chipRow toolChipRow">
+                        {selectedToolbox.tools.map((tool) => (
+                          <span className="chip toolChip" key={tool}>
+                            {formatToolName(tool)}
+                          </span>
+                        ))}
+                      </span>
+                    </>
+                  ) : null}
                 </div>
                 <label htmlFor="workflow-prompt">Workflow mandate</label>
                 <textarea
@@ -443,6 +462,15 @@ export function Studio() {
                   <article className="toolboxItem" key={toolbox.name}>
                     <strong>{toolbox.name}</strong>
                     <p>{toolbox.description}</p>
+                    {toolbox.tools && toolbox.tools.length > 0 ? (
+                      <span className="chipRow toolChipRow" aria-label={`${toolbox.name} tools`}>
+                        {toolbox.tools.map((tool) => (
+                          <span className="chip toolChip" key={tool}>
+                            {formatToolName(tool)}
+                          </span>
+                        ))}
+                      </span>
+                    ) : null}
                   </article>
                 ))
               ) : (
@@ -498,9 +526,13 @@ function AgentCard({ agentRun }: { agentRun: AgentRun }) {
 
       {agentRun.error ? <Alert tone="error" title="Agent error" message={agentRun.error} /> : null}
 
-      <pre className="agentOutput">
-        {agentRun.output.trim().length > 0 ? agentRun.output : 'Awaiting streamed output…'}
-      </pre>
+      {agentRun.output.trim().length > 0 ? (
+        <div className="agentOutput markdownBody">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{agentRun.output}</ReactMarkdown>
+        </div>
+      ) : (
+        <div className="agentOutput agentOutputEmpty">Awaiting streamed output…</div>
+      )}
 
       {agentRun.artifacts.length > 0 ? (
         <div className="artifactRow" aria-label={`${agentRun.label} artifacts`}>
@@ -576,4 +608,18 @@ function formatAgentName(agentName: string): string {
 
 function formatSkillName(skill: string): string {
   return skill.replace(/[-_]+/g, ' ').replace(/\bxls\b/i, 'XLS');
+}
+
+const TOOL_LABELS: Record<string, string> = {
+  code_interpreter: 'Code Interpreter',
+  web_search: 'Web Search',
+  sec_edgar_mcp: 'SEC EDGAR MCP',
+  sec_edgar: 'SEC EDGAR MCP'
+};
+
+function formatToolName(tool: string): string {
+  return (
+    TOOL_LABELS[tool] ??
+    tool.replace(/[-_]+/g, ' ').replace(/\bmcp\b/i, 'MCP').replace(/\b\w/g, (c) => c.toUpperCase())
+  );
 }

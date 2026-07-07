@@ -146,7 +146,32 @@
   .agentStatus.error { color: var(--color-error); background: var(--color-error-soft); }
   .spinner, .buttonSpinner { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 999px; animation: spin 900ms linear infinite; }
   .buttonSpinner { color: oklch(1 0 0); }
-  .agentOutput { min-height: 116px; max-height: 360px; margin: 0; overflow: auto; padding: 16px; border-radius: var(--radius-md); color: oklch(0.94 0.013 250); background: oklch(0.16 0.05 253); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 0.9rem; line-height: 1.6; white-space: pre-wrap; }
+  .agentOutput { min-height: 116px; max-height: 460px; margin: 0; overflow: auto; padding: 18px 20px; border-radius: var(--radius-md); color: var(--color-ink); background: var(--color-surface); border: 1px solid var(--color-border); font-size: 0.94rem; line-height: 1.62; }
+  .agentOutputEmpty { display: flex; align-items: center; color: var(--color-muted); font-style: italic; }
+  .markdownBody > :first-child { margin-top: 0; }
+  .markdownBody > :last-child { margin-bottom: 0; }
+  .markdownBody h1, .markdownBody h2, .markdownBody h3, .markdownBody h4, .markdownBody h5 { margin: 1.05em 0 0.5em; line-height: 1.25; font-weight: 700; color: var(--color-navy-950); }
+  .markdownBody h1 { font-size: 1.4rem; }
+  .markdownBody h2 { font-size: 1.2rem; }
+  .markdownBody h3 { font-size: 1.06rem; }
+  .markdownBody h4, .markdownBody h5 { font-size: 0.98rem; }
+  .markdownBody p { margin: 0.6em 0; }
+  .markdownBody ul, .markdownBody ol { margin: 0.6em 0; padding-left: 1.45em; }
+  .markdownBody li { margin: 0.25em 0; }
+  .markdownBody li > p { margin: 0.2em 0; }
+  .markdownBody a { color: var(--color-primary-strong); text-decoration: underline; }
+  .markdownBody strong { font-weight: 700; }
+  .markdownBody code { padding: 0.12em 0.4em; border-radius: 6px; background: var(--color-surface-strong); font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: 0.86em; }
+  .markdownBody pre { margin: 0.7em 0; padding: 14px 16px; overflow: auto; border-radius: var(--radius-md); background: oklch(0.16 0.05 253); }
+  .markdownBody pre code { padding: 0; background: transparent; color: oklch(0.94 0.013 250); }
+  .markdownBody blockquote { margin: 0.7em 0; padding: 4px 14px; border-left: 3px solid var(--color-border); color: var(--color-muted); }
+  .markdownBody table { width: 100%; border-collapse: collapse; margin: 0.8em 0; font-size: 0.88rem; }
+  .markdownBody th, .markdownBody td { padding: 8px 10px; border: 1px solid var(--color-border); text-align: left; vertical-align: top; }
+  .markdownBody thead th { background: var(--color-surface-strong); font-weight: 700; }
+  .markdownBody tbody tr:nth-child(even) { background: var(--color-surface); }
+  .markdownBody hr { margin: 1em 0; border: 0; border-top: 1px solid var(--color-border); }
+  .toolChipRow { margin-top: 8px; }
+  .toolChip { border: 1px solid oklch(0.82 0.06 190); color: oklch(0.36 0.11 190); background: oklch(0.95 0.045 190); }
   .artifactChip { border: 1px solid oklch(0.78 0.055 247); color: var(--color-primary-strong); background: var(--color-primary-soft); text-decoration: none; transition: transform 160ms ease-out, background 160ms ease-out; }
   .artifactChip:hover { transform: translateY(-1px); background: oklch(0.9 0.05 247); }
   .alert { display: grid; gap: 4px; padding: 14px 16px; border: 1px solid var(--color-error); border-radius: var(--radius-md); color: var(--color-error); background: var(--color-error-soft); }
