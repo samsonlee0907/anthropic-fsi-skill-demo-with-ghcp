@@ -253,6 +253,22 @@ Delete the environment's resource group:
 az group delete --name rg-<env> --yes --no-wait
 ```
 
+> **Purge the soft-deleted Foundry account or you leak model quota.** Deleting the RG
+> soft-deletes the `Microsoft.CognitiveServices` (Foundry) account, and its model-deployment
+> TPM allocation stays counted against your regional quota until the account is *purged*.
+> Leftover soft-deleted accounts are a common cause of a later deploy failing step 1 with
+> `InsufficientQuota` even though no live resources remain. After the RG delete completes:
+>
+> ```powershell
+> # list soft-deleted accounts still holding quota
+> az cognitiveservices account list-deleted -o table
+> # purge the one for this env (original RG name + account name from the list)
+> az cognitiveservices account purge --location <location> --resource-group rg-<env> --name <aif-token>
+> ```
+>
+> Verify the quota came back with
+> `az cognitiveservices usage list --location <location> --query "[?name.value=='OpenAI.GlobalStandard.gpt-5.1']"`.
+
 ## 11. Official references
 
 - [Azure AI Foundry hosted agents](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry)
