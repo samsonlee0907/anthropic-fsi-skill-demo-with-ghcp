@@ -18,7 +18,7 @@ How this differs from the v2 in-process module (``fsi_scenario_agent.py``, kept 
 
 2. **Public filing grounding is a GOVERNED, SELF-HOSTED MCP TOOL.** SEC EDGAR is no
    longer imported in-process in this container. Instead the ``sec-edgar-mcp`` server
-   runs as its own Container App (``ca-secedgar-mcp-fsi-demo-v3``) and is consumed at
+   runs as its own Container App (``ca-secedgar-mcp-<env>``) and is consumed at
    runtime as a **Foundry-native hosted (remote) MCP tool** via
    ``FoundryChatClient.get_mcp_tool(name="sec_edgar", url=..., headers=..., allowed_tools=...,
    approval_mode="never_require")``. The Foundry Responses gateway connects to the remote

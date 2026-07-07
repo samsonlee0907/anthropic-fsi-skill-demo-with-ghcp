@@ -34,10 +34,10 @@ from azure.ai.projects.models import SkillInlineContent
 from azure.identity import DefaultAzureCredential
 from azure.core.exceptions import ResourceNotFoundError, HttpResponseError
 
-PROJECT_ENDPOINT = os.environ.get(
-    "PROJECT_ENDPOINT",
-    "https://aif66lhnuec.services.ai.azure.com/api/projects/proj-fsi-demo",
-).rstrip("/")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _common import require_project_endpoint  # noqa: E402
+
+PROJECT_ENDPOINT = require_project_endpoint()
 
 # Immutable commit in anthropics/financial-services.
 REF = os.environ.get("ANTHROPIC_SKILLS_REF", "4aa51ed3d379731f8f9beff498d749580372699c")

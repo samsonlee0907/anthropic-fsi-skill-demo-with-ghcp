@@ -2,7 +2,7 @@
 
 name: azd
 services:
-    fsi-equity-v3:
+    fsi-equity:
         project: ./agent-src
         host: azure.ai.agent
         language: python
@@ -42,11 +42,11 @@ services:
             - name: FSI_SCENARIO_BRIEF
               value: Build DCF, comps and 3-statement models and an institutional-quality valuation package.
         kind: hosted
-        name: fsi-equity-v3
+        name: fsi-equity
         protocols:
             - protocol: responses
               version: 2.0.0
-    fsi-ib-pitch-v3:
+    fsi-ib-pitch:
         project: ./agent-src
         host: azure.ai.agent
         language: python
@@ -86,11 +86,11 @@ services:
             - name: FSI_SCENARIO_BRIEF
               value: Build competitive analysis, comps exhibits and an institutional-quality pitch deck (.pptx) with supporting workbooks.
         kind: hosted
-        name: fsi-ib-pitch-v3
+        name: fsi-ib-pitch
         protocols:
             - protocol: responses
               version: 2.0.0
-    fsi-pe-lbo-v3:
+    fsi-pe-lbo:
         project: ./agent-src
         host: azure.ai.agent
         language: python
@@ -130,7 +130,7 @@ services:
             - name: FSI_SCENARIO_BRIEF
               value: Build a leveraged-buyout model with returns analysis and an audit-ready workbook (.xlsx).
         kind: hosted
-        name: fsi-pe-lbo-v3
+        name: fsi-pe-lbo
         protocols:
             - protocol: responses
               version: 2.0.0

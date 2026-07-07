@@ -1,300 +1,212 @@
-# FSI Multi-Agent Demo v3 - Runbook
+# FSI Multi-Agent Demo — Operations Runbook
 
-This runbook operates the **v3** deployment of the FSI multi-agent demo on Azure AI Foundry. v3 runs in a separate resource group, `rg-fsi-demo-v3`, and leaves the earlier `rg-fsi-demo` and `rg-fsi-demo-v2` deployments untouched.
+This runbook explains how the stack is deployed and operated. The one-command path is
+[`deploy.ps1`](../deploy.ps1); the sections below document what each step does so you can
+run, debug, or re-run parts of it manually.
 
-The design follows Anthropic's [`financial-analysis`](https://github.com/anthropics/financial-services/tree/main/plugins/vertical-plugins/financial-analysis/skills) skill layout, but deploys the runtime as three scenario-based **Azure AI Foundry hosted agents**.
+Everything is parameterized by `environmentName` (referred to below as `<env>`). All
+resource names derive from it, so a second `<env>` gives a fully isolated deployment. No
+resource names, endpoints, principal IDs, or local paths are hardcoded.
 
-All data is synthetic and for demo purposes only.
+All bundled data is synthetic and for demo purposes only.
 
-## 1. Live endpoints and resources
+## 1. Naming convention
 
-| Resource | Value |
+| Resource | Name pattern |
 |---|---|
-| Portal | https://ca-portal-fsi-demo-v3.politeocean-8e501b06.eastus2.azurecontainerapps.io |
-| API | https://ca-api-fsi-demo-v3.politeocean-8e501b06.eastus2.azurecontainerapps.io |
-| Resource group | `rg-fsi-demo-v3` |
-| Region | `eastus2` |
-| Subscription | `6a7da9fe-e881-4d1a-bf1b-c5f4fc3530ac` |
-| Foundry project endpoint | `https://aifxzqm33pk.services.ai.azure.com/api/projects/proj-fsi-demo-v3` |
-| Foundry account / project | `aifxzqm33pk` / `proj-fsi-demo-v3` |
-| ACR | `acrxzqm33pk` |
-| Storage | `stxzqm33pk` |
-| Artifacts container | `artifacts` |
-| Key Vault | `kv-fsi-demo-v3-xzqm33pk` |
+| Resource group | `rg-<env>` |
+| Foundry account | `aif<token>` |
+| Foundry project | `proj-<env>` |
+| Storage account | `st<token>` |
+| Container Registry | `acr<token>` |
+| Key Vault | `kv-<env>-<token>` |
+| App Insights / Log Analytics | `appi-<env>-<token>` / `log-<env>-<token>` |
+| Container Apps env | `cae-<env>-<token>` |
+| API / Portal apps | `ca-api-<env>` / `ca-portal-<env>` |
+| Hosted agents | `fsi-equity`, `fsi-ib-pitch`, `fsi-pe-lbo` |
+| Toolboxes | `tb-equity-research`, `tb-ib-pitch`, `tb-pe-lbo` |
 
-## 2. Scenario map
+`<token>` is a deterministic `uniqueString` hash of the subscription + env + location.
 
-| Scenario key | Hosted agent | Toolbox | Deliverable |
-|---|---|---|---|
-| `equity-research` | `fsi-equity-v3` | `tb-equity-research` | Valuation `.xlsx`; SEC filing-backed public-company metrics when a real ticker is supplied |
-| `ib-pitch` | `fsi-ib-pitch-v3` | `tb-ib-pitch` | Pitch `.pptx`; SEC 10-K/10-Q/8-K context for public issuers |
-| `pe-lbo` | `fsi-pe-lbo-v3` | `tb-pe-lbo` | LBO `.xlsx`; SEC financials for public LBO targets where applicable |
+## 2. Prerequisites
 
-The hosted agents are deployed through `azd ai agent` from:
+- Azure subscription with Foundry model quota in the target region for the deployments in
+  `infra/modules/foundry.bicep` (`gpt-5.1`, `gpt-5.4-mini`, `text-embedding-3-large` by
+  default; adjust the `modelDeployments` param as needed).
+- `az`, `azd` (with the `azure.ai.agent` capability), `gh` (authenticated), Python 3.11+.
+- `az login`; `pip install azure-ai-projects azure-identity`.
 
-```text
-C:\Users\samsonlee\GHCP\fsi-multiagent-demo\agents\hosted\_azd
-```
+## 3. End-to-end deploy (what `deploy.ps1` does)
 
-Each service block in `azure.yaml` points at the same Python source and differs by environment variables:
+1. **Provision infra** (subscription-scoped bicep). Creates the resource group and all
+   resources above plus model deployments and app-identity RBAC.
+   ```powershell
+   az deployment sub create --name fsi-<env> --location <location> `
+     --template-file infra/main.bicep `
+     --parameters environmentName=<env> location=<location> `
+                  developerPrincipalId=<your-object-id> `
+                  agentModelDeploymentName=gpt-5.1
+   ```
+2. **Register skills + create toolboxes** against the new project (uses `PROJECT_ENDPOINT`
+   from the infra `AZURE_AI_PROJECT_ENDPOINT` output):
+   ```powershell
+   $env:PROJECT_ENDPOINT = "<AZURE_AI_PROJECT_ENDPOINT>"
+   python agents/scripts/provision_skills.py
+   python agents/scripts/create_toolboxes.py
+   ```
+3. **(Optional) Deploy the SEC EDGAR MCP** Container App and generate its shared secret:
+   ```powershell
+   ./scripts/deploy_sec_edgar.ps1 -ResourceGroup rg-<env> -RegistryName acr<token> `
+     -UserAssignedIdentityId <AZURE_MANAGED_IDENTITY_ID> `
+     -SecEdgarUserAgent "Your Name (you@example.com)" -FsiMcpKey <generated-secret>
+   ```
+4. **Bind skills (+ SEC tool) to toolboxes** and promote the default version (the MCP
+   endpoint serves the default version):
+   ```powershell
+   # With SEC_EDGAR_MCP_URL / FSI_MCP_KEY set if SEC EDGAR is enabled:
+   python agents/scripts/bind_skills_to_toolboxes.py
+   ```
+5. **Map infra outputs into the azd agent environment**:
+   ```powershell
+   ./scripts/set_azd_env_from_infra.ps1 -ProjectEndpoint <...> -StorageBlobEndpoint <...> `
+     -ModelDeploymentName gpt-5.1 -EnvName <env>
+   ```
+6. **Deploy the 3 hosted agents** (see §4).
+7. **Grant agent instance-identity RBAC** (see §5).
+8. **Build + deploy API and portal** images (see §6).
+9. **Validate** all three scenarios (see §7).
 
-- `FSI_SCENARIO_KEY`
-- `FSI_SCENARIO_NAME`
-- `TOOLBOX_ENDPOINT`
-- `AGENT_NAME`
+## 4. Deploy / redeploy the hosted agents
 
-## 3. Architecture at a glance
-
-```text
-Browser
-  -> Portal Container App (Next.js)
-  -> API Container App (FastAPI BFF, SSE)
-  -> Foundry Responses protocol, background:true + poll
-  -> Scenario hosted agent in Foundry Agent Service
-  -> Foundry toolbox MCP for skill loading
-  -> SEC EDGAR MCP-backed function tools for public filings and XBRL
-  -> Native code_interpreter / web_search
-  -> ArtifactEgressMiddleware uploads generated files to Blob Storage
-  -> API reads private blob and exposes /api/artifacts/{id}
-```
-
-Important runtime decisions:
-
-- The API does **not** run an in-process multi-agent framework anymore.
-- The API does **not** call 8 specialist prompt agents plus 3 orchestrators anymore.
-- The API invokes exactly one deployed hosted agent per scenario.
-- Skills are loaded through toolbox MCP with `FoundryToolbox.as_skills_provider()`.
-- SEC EDGAR is exposed as a narrow in-container function-tool surface backed by the
-  open-source `sec-edgar-mcp` package. It is not exposed as a public unauthenticated
-  HTTP MCP endpoint.
-- Code Interpreter is native, not toolbox-provided, because the toolbox preview Code Interpreter path returned server-side 500s during validation.
-- Long-running hosted-agent calls use Responses background mode. Plain non-streaming calls can be disconnected by the gateway before Code Interpreter finishes.
-
-## 4. Demo script
-
-1. Open the portal.
-2. Show the three scenario cards and the visible toolbox/skill metadata.
-3. Run **Equity Research and Valuation**. The hosted agent should produce a downloadable valuation workbook.
-4. Run **Private Equity LBO Screening**. The hosted agent should produce a downloadable LBO workbook.
-5. Run **Investment Banking Pitch**. The hosted agent should produce a downloadable pitch deck.
-6. Optional public-filing path: edit a prompt to include a real public ticker, for example "Use AAPL SEC filings for the public-company benchmark context." The agent should prefer SEC EDGAR tools for filing metadata, sections, XBRL financials, and cite SEC URLs.
-7. Open one downloaded file to show it is a real Office artifact, not a text placeholder.
-8. Optionally show the API health endpoint and Application Insights telemetry.
-
-Validated live artifacts:
-
-| Scenario | Validated artifact |
-|---|---|
-| `equity-research` | `NovaGrid_valuation_snapshot.xlsx` |
-| `pe-lbo` | `NovaGrid_Compact_LBO.xlsx` |
-| `ib-pitch` | `NovaGrid_pitch_demo.pptx` |
-| SEC EDGAR smoke via `equity-research` | `sec_smoketest_aapl.xlsx` with AAPL CIK, latest 10-K date, accession number, and SEC URL |
-
-## 5. API checks
-
-Health:
+The hosted-agent module (`agents/hosted/*.py`) is the source of truth; the deployed copy is
+`agents/hosted/_azd/agent-src/*.py`. Always sync before deploying — a stale copy silently
+ships old behavior.
 
 ```powershell
-Invoke-RestMethod https://ca-api-fsi-demo-v3.politeocean-8e501b06.eastus2.azurecontainerapps.io/api/health
-```
+Copy-Item agents/hosted/fsi_hosted_agent_v3.py agents/hosted/_azd/agent-src/ -Force
+Copy-Item agents/hosted/fsi_artifact_egress.py agents/hosted/_azd/agent-src/ -Force
+Copy-Item agents/hosted/requirements.txt       agents/hosted/_azd/agent-src/ -Force
+Get-FileHash agents/hosted/fsi_hosted_agent_v3.py, agents/hosted/_azd/agent-src/fsi_hosted_agent_v3.py
 
-Expected:
-
-```json
-{
-  "status": "ok",
-  "telemetry": true
-}
-```
-
-Scenario catalog:
-
-```powershell
-Invoke-RestMethod https://ca-api-fsi-demo-v3.politeocean-8e501b06.eastus2.azurecontainerapps.io/api/scenarios
-```
-
-Toolbox catalog:
-
-```powershell
-Invoke-RestMethod https://ca-api-fsi-demo-v3.politeocean-8e501b06.eastus2.azurecontainerapps.io/api/toolboxes
-```
-
-## 6. Headless validation
-
-The session validator submits to `/api/run`, reads the SSE stream, captures artifact URLs, downloads files, and checks that Office artifacts start with the expected OOXML zip signature.
-
-```powershell
-cd C:\Users\samsonlee\.copilot\session-state\c9ab9ad2-4089-49e2-a82c-0738e120c0a2\files
-
-python .\v3_api_e2e.py equity-research "Create a compact valuation workbook for NovaGrid."
-python .\v3_api_e2e.py pe-lbo "Create a compact sponsor LBO screen for NovaGrid."
-python .\v3_api_e2e.py ib-pitch "Create a concise buyer pitch deck for NovaGrid."
-```
-
-## 7. Rebuild and redeploy hosted agents
-
-When changing hosted-agent code, copy the source into the azd agent source folder before deployment.
-
-```powershell
-cd C:\Users\samsonlee\GHCP\fsi-multiagent-demo\agents\hosted
-
-Copy-Item .\fsi_hosted_agent_v3.py .\_azd\agent-src\fsi_hosted_agent_v3.py -Force
-Copy-Item .\fsi_artifact_egress.py .\_azd\agent-src\fsi_artifact_egress.py -Force
-
-cd .\_azd
-$env:GH_TOKEN = gh auth token
-$env:GITHUB_TOKEN = $env:GH_TOKEN
+cd agents/hosted/_azd
+$env:GH_TOKEN = gh auth token; $env:GITHUB_TOKEN = $env:GH_TOKEN
 $env:AZD_AGENT_SKIP_ACR = "true"
-azd env set SEC_EDGAR_USER_AGENT "Your Name (your.email@example.com)"
-
-azd deploy fsi-equity-v3
-azd deploy fsi-ib-pitch-v3
-azd deploy fsi-pe-lbo-v3
+azd deploy fsi-equity -e <env>
+azd deploy fsi-ib-pitch -e <env>
+azd deploy fsi-pe-lbo -e <env>
 ```
 
-Deployment notes:
+Notes:
+- `azd config set auth.useAzCliAuth true` should be enabled.
+- `azure.yaml` environment variables use list form (`{ name, value }`) and resolve from the
+  azd environment set in step 5.
+- Keep `ENABLE_INSTRUMENTATION=false` on the agent services.
 
-- `azd config set auth.useAzCliAuth true` should remain enabled.
-- `azure.yaml` environment variables must use list form: `{ name, value }`.
-- Keep `ENABLE_INSTRUMENTATION=false` in hosted-agent service env vars.
-- Set `SEC_EDGAR_USER_AGENT` before deployment. The SEC requires a real contact name and email for automated EDGAR access, and `sec-edgar-mcp` fails startup/tool calls without it.
-- If `AzureCLICredential` fails transiently during deploy, refresh Azure CLI auth with `az account get-access-token` and retry.
+## 5. Required RBAC
 
-## 8. Required RBAC
+The bicep grants the **app** managed identity its roles automatically. The **hosted-agent
+instance identities** exist only after the agents deploy, so `deploy.ps1` grants them via
+`scripts/grant_agent_rbac.ps1` (or run it manually).
 
-The API Container App user-assigned managed identity needs:
+App managed identity:
 
 | Scope | Role |
 |---|---|
-| Foundry account `aifxzqm33pk` | `Cognitive Services User` |
-| Foundry account/project | `Foundry User` |
-| Storage `stxzqm33pk` | `Storage Blob Data Contributor` |
-| ACR `acrxzqm33pk` | `AcrPull` |
+| Foundry account | `Cognitive Services User`, `Foundry User` |
+| Storage account | `Storage Blob Data Contributor` |
+| Container Registry | `AcrPull` |
 | Key Vault | `Key Vault Secrets User` |
 
-Each hosted agent has its own instance identity. Each agent identity needs:
+Each hosted-agent instance identity:
 
 | Scope | Role |
 |---|---|
-| Foundry account `aifxzqm33pk` | `Cognitive Services User` |
-| Storage `stxzqm33pk` | `Storage Blob Data Contributor` |
+| Foundry account | `Cognitive Services User` |
+| Storage account | `Storage Blob Data Contributor` |
 
-Known hosted-agent principal IDs from validation:
+> A hosted agent authenticates as its per-agent `instance_identity`. If artifact upload
+> fails with `AuthorizationFailure`, first confirm storage is network-reachable (§8), then
+> confirm the identity actually used: log the storage-token `oid` in the container and grant
+> that principal `Storage Blob Data Contributor`.
 
-| Agent | Instance principal ID |
-|---|---|
-| `fsi-equity-v3` | `40528086-0db5-45e6-a789-7ef3ed41c466` |
-| `fsi-ib-pitch-v3` | `bef11ccf-4f87-48bf-8d4e-c4ebdfd7dfcd` |
-| `fsi-pe-lbo-v3` | `3649c131-e8e0-4a33-98b0-05cb62124ebf` |
-
-> **Identity note:** a Foundry hosted agent exposes an `instance_identity` (per-agent, granted the
-> roles above) and a per-agent `blueprint` identity. In this deployment the in-container
-> `DefaultAzureCredential` used by the egress middleware resolves to the **instance identity**
-> (confirmed via the token `oid`), which is why granting the instance identities the storage role is
-> what matters. If a future runtime resolves to a different identity, the fastest diagnosis is to log
-> the storage-token `oid` in the container and grant that principal `Storage Blob Data Contributor`.
-> **Reminder:** RBAC alone is not sufficient -- the storage account must also be network-reachable
-> (`publicNetworkAccess=Enabled`); see the storage gotcha in section 12.
-
-## 9. Rebuild and redeploy the API
+## 6. Redeploy the API and portal
 
 ```powershell
-cd C:\Users\samsonlee\GHCP\fsi-multiagent-demo
-$env:PYTHONUTF8 = "1"
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+# API
+az acr build --registry acr<token> --image fsi-api:latest ./api
+az containerapp update -n ca-api-<env> -g rg-<env> `
+  --image acr<token>.azurecr.io/fsi-api:latest `
+  --revision-suffix ("v" + (Get-Date -Format 'MMddHHmmss'))
 
-az acr build --registry acrxzqm33pk --image fsi-api:v3 .\api
-az acr task list-runs --registry acrxzqm33pk --top 1 --query "[0].status" -o tsv
-
-az containerapp update `
-  -n ca-api-fsi-demo-v3 `
-  -g rg-fsi-demo-v3 `
-  --image acrxzqm33pk.azurecr.io/fsi-api:v3 `
-  --revision-suffix v$(Get-Date -Format 'MMddHHmmss')
+# Portal (NEXT_PUBLIC_API_BASE_URL is baked at build time)
+az acr build --registry acr<token> --image fsi-portal:latest `
+  --build-arg NEXT_PUBLIC_API_BASE_URL=<API_URL> ./portal
+az containerapp update -n ca-portal-<env> -g rg-<env> `
+  --image acr<token>.azurecr.io/fsi-portal:latest `
+  --revision-suffix ("v" + (Get-Date -Format 'MMddHHmmss'))
 ```
 
-If the Windows console raises `UnicodeEncodeError` while streaming `az acr build` logs, verify the run server-side with `az acr task list-runs`; the build can still succeed.
+The API's environment variables (`PROJECT_ENDPOINT`, `STORAGE_BLOB_ENDPOINT`,
+`ARTIFACTS_CONTAINER`, `AZURE_CLIENT_ID`, `APPLICATIONINSIGHTS_CONNECTION_STRING`) are wired
+directly from infra outputs in `infra/main.bicep`, so a fresh image picks them up without
+manual `az containerapp update --set-env-vars`.
 
-## 10. Rebuild and redeploy the portal
-
-`NEXT_PUBLIC_API_BASE_URL` is compiled into the Next.js image.
+## 7. Validation
 
 ```powershell
-cd C:\Users\samsonlee\GHCP\fsi-multiagent-demo
-
-az acr build --registry acrxzqm33pk --image fsi-portal:v3 `
-  --build-arg NEXT_PUBLIC_API_BASE_URL=https://ca-api-fsi-demo-v3.politeocean-8e501b06.eastus2.azurecontainerapps.io `
-  .\portal
-
-az containerapp update `
-  -n ca-portal-fsi-demo-v3 `
-  -g rg-fsi-demo-v3 `
-  --image acrxzqm33pk.azurecr.io/fsi-portal:v3 `
-  --revision-suffix v$(Get-Date -Format 'MMddHHmmss')
+$env:API_BASE_URL = "<API_URL>"
+python scripts/validate.py                     # all scenarios
+python scripts/validate.py pe-lbo              # one scenario
 ```
 
-## 11. Observability
+The validator submits to `/api/run`, reads the SSE stream, downloads the produced artifact,
+and asserts it is a real OOXML file (PK zip signature). Exit code is non-zero on any
+failure, so it doubles as a CI gate.
 
-The API uses `azure-monitor-opentelemetry` in `api\app\telemetry.py`. Telemetry is enabled when `APPLICATIONINSIGHTS_CONNECTION_STRING` is present on the API Container App.
+Quick API checks:
 
-Useful query:
-
-```kusto
-dependencies
-| where timestamp > ago(1h)
-| where name in ("scenario.run", "foundry.background.submit", "foundry.background.poll")
-| project timestamp, name, customDimensions
-| order by timestamp desc
+```powershell
+Invoke-RestMethod <API_URL>/api/health       # { "status": "ok", ... }
+Invoke-RestMethod <API_URL>/api/scenarios
+Invoke-RestMethod <API_URL>/api/toolboxes
 ```
 
-Hosted-agent framework instrumentation is disabled in `fsi_hosted_agent_v3.py` with `agent_framework.observability.disable_instrumentation()`. This is intentional: the deployed host can otherwise re-enable instrumentation and hit a serialization issue for native Code Interpreter tool parameters.
+## 8. Known gotchas (these caused real, hard-to-diagnose failures)
 
-## 12. Known gotchas
+- **Storage MUST be network-reachable.** The hosted-agent compute and the VNet-less
+  Container Apps BFF reach Blob Storage over the public endpoint, gated by Entra ID RBAC only
+  (`allowSharedKeyAccess=false`, `allowBlobPublicAccess=false`). If
+  `publicNetworkAccess=Disabled` with no private endpoints for both networks, artifact upload
+  fails with `AuthorizationFailure "This request is not authorized..."` — the SAME message as
+  missing RBAC, so it is easy to misdiagnose. `infra/modules/storage.bicep` keeps
+  `publicNetworkAccess=Enabled`; RBAC alone is not sufficient.
+- **Sync the runtime into `_azd/agent-src` before `azd deploy`** (verify with `Get-FileHash`).
+- **The toolbox is connected via `async with toolbox:` in `main()`, NOT placed in the agent
+  `tools` list.** Putting it in `tools` suppresses the native `code_interpreter`/`web_search`.
+- **Invoke hosted agents with Responses background mode + poll**, not plain `stream:false`.
+  Background requires `store:true`. The final text carries the `<<<ARTIFACT ...>>>` sentinel.
+- **The host strips Code Interpreter content types** from the outer `/responses` output, so
+  artifacts can only be detected via the egress-middleware sentinel, never by scanning the
+  outer response.
+- **Framework instrumentation is intentionally disabled** in the runtime (a core-1.10.0
+  span-attr serialization bug crashes on `AutoCodeInterpreterToolParam`).
+- **`azd` credential lookups flake** (`AzureCLICredential: exit status 1`) under back-to-back
+  deploys. Deploy one service at a time and retry — `deploy.ps1` retries up to 3×.
+- **SEC EDGAR (optional):** requires `SEC_EDGAR_USER_AGENT` (a real contact string) on the MCP
+  Container App; the Foundry gateway injects the shared-secret header (`x-fsi-mcp-key`).
+  Toggle by setting/clearing `SEC_EDGAR_MCP_URL`. Upstream `sec-edgar-mcp` is AGPL-3.0 —
+  review licensing before commercial redistribution.
+- **Transient model errors:** heavy single prompts (deep SEC retrieval + full multi-sheet
+  DCF) can 408-timeout at the model layer (~360s). The BFF mitigates with one retry, one
+  corrective artifact turn, and finally a valid one-sheet `.xlsx` fallback so the portal
+  always has a downloadable file. That fallback is demo resilience, not the primary path.
 
-- **Tool approval:** `SkillsProvider` creates skill tools with approval required. The deployed hosted-agent runtime does not provide an `AgentSession`, so `ToolApprovalMiddleware` fails. The code patches the provider's created tools to `approval_mode=None`.
-- **Responses background mode:** use `background:true` with `store:true`; otherwise long non-streaming requests can disconnect before Code Interpreter completes.
-- **Toolbox Code Interpreter:** toolbox MCP Code Interpreter returned server-side 500s during validation, so v3 uses native Code Interpreter from the project client.
-- **SEC EDGAR MCP (remote tool):** `stefanoamorelli/sec-edgar-mcp` runs as a **self-hosted Container App** (`ca-secedgar-mcp-*`) and is consumed by the hosted agents as a **Foundry-native remote (hosted) MCP tool** built from the project client, NOT imported in the agent image. The Foundry gateway connects to it and injects a shared-secret header (`x-fsi-mcp-key`), so the MCP endpoint is not publicly usable without the key. It still requires `SEC_EDGAR_USER_AGENT` on the MCP Container App and should obey SEC fair-access limits. Set/clear `SEC_EDGAR_MCP_URL` (azd env) to enable/disable the tool.
-- **SEC EDGAR license:** the upstream `sec-edgar-mcp` package is AGPL-3.0. This is acceptable for an internal demo, but review licensing before commercial redistribution or embedding in proprietary distributions.
-- **Storage MUST be network-reachable (critical):** the hosted-agent managed compute and the (VNet-less) Container Apps BFF reach Blob Storage over the public endpoint, gated by Entra ID (AAD) RBAC only (`allowSharedKeyAccess=false`, `allowBlobPublicAccess=false`). If the storage account is set to `publicNetworkAccess=Disabled` (with no private endpoints/VNet rules for both the agent compute and the Container Apps env), artifact **upload fails with `AuthorizationFailure` "This request is not authorized to perform this operation"** even though RBAC is correct -- Azure Storage returns that generic error for network denial. Keep `publicNetworkAccess=Enabled` (`infra/modules/storage.bicep` sets this explicitly) or add private endpoints for both networks. Diagnose via the deployed session logstream: look for `fsi.hosted.v3.egress:blob upload ... failed`.
-- **Artifact egress:** hosted-agent HTTP responses do not reliably expose Code Interpreter file citations to the BFF (the host also drops `code_interpreter_tool_call`/`_result` content from the outer response). `ArtifactEgressMiddleware` therefore harvests files in-container off the CI `container_id` (present on the response object), uploads to the private `artifacts` Blob container, and appends a parseable `<<<ARTIFACT name=... blob=...>>>` sentinel to the response text. The BFF must invoke with `stream=False` (background mode) for the middleware to observe the fully materialised response.
-- **Artifact fallback:** if a hosted run completes but no Blob sentinel appears after one corrective artifact turn, the API registers a valid one-sheet `.xlsx` summary artifact from the agent narrative so the portal still has a downloadable file. Treat this as a demo-resilience fallback, not a replacement for the primary Code Interpreter artifact path.
-- **Transient model errors:** the API retries one primary hosted-agent run for 408 timeouts or 429 rate limits before surfacing an error.
-- **Container App identity:** set `AZURE_CLIENT_ID` so `DefaultAzureCredential` selects the app UAMI.
-- **Older deployments:** do not use old v1 resource names such as `rg-fsi-demo`, `aif66lhnuec`, or `acr66lhnuec` when operating v3.
-
-## 13. Rebuild from Anthropic skills as a reusable repo
-
-This repo is intended to be reusable for future FSI agent builds, not only this single deployment.
-
-1. **Start with the source skill catalog.** Use Anthropic's `financial-analysis/skills` folder as the upstream pattern. Keep a pinned copy of each selected `SKILL.md` under `agents\skills` and document any Azure-specific adaptation.
-2. **Design by scenario.** Do not create one long-lived agent per skill. Create one hosted agent per business workflow, then assign it a scenario toolbox. In this demo, `fsi-equity-v3` uses `tb-equity-research`, `fsi-ib-pitch-v3` uses `tb-ib-pitch`, and `fsi-pe-lbo-v3` uses `tb-pe-lbo`.
-3. **Register skills.** Run `agents\scripts\provision_skills.py` against the target Foundry project to create centrally managed Foundry skills.
-4. **Bind and promote toolboxes.** Run `agents\scripts\bind_skills_to_toolboxes.py`. Confirm the toolbox default version points to the version containing the skill references; the MCP endpoint serves the default version.
-5. **Deploy hosted agents.** Use the env-driven runtime in `agents\hosted\fsi_hosted_agent_v3.py`. Keep the `_azd\agent-src` copy synced before `azd deploy`.
-6. **Use native tools where the toolbox preview is unreliable.** The runtime consumes skills through `FoundryToolbox.as_skills_provider()`, but uses native Foundry `code_interpreter` and `web_search`. Toolbox MCP Code Interpreter returned preview server-side 500s during validation.
-7. **Integrate SEC EDGAR safely.** `sec-edgar-mcp` runs as a self-hosted Container App (built from `agents\mcp\sec-edgar`) and is attached to the agents as a Foundry-native remote MCP tool; the gateway injects a shared-secret header (`x-fsi-mcp-key`), so the endpoint is unusable without the key and no SEC code ships in the agent image. Toggle it with the `SEC_EDGAR_MCP_URL` azd env var. Set `SEC_EDGAR_USER_AGENT` to a real contact, keep `SEC_EDGAR_DEEP_TOOLS=false` by default, and review the upstream AGPL-3.0 license before commercial reuse.
-8. **Keep the BFF resilient.** The API uses Responses background mode, retries one transient 408/429 hosted-agent run, issues one artifact-corrective turn when no Blob sentinel is returned, and finally creates a valid summary `.xlsx` fallback if hosted artifact egress still misses. This keeps the UI demo usable while preserving the hosted agent as the analysis source.
-9. **Validate both paths.** Run the headless API validator and then a browser-driven portal test. The UI validation must click a scenario card, submit a prompt, wait for `Complete`, and download a valid OOXML artifact.
-
-Official references:
-
-- Azure AI Foundry hosted agents: https://learn.microsoft.com/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry
-- Azure AI Foundry Agent Service runtime components: https://learn.microsoft.com/azure/ai-foundry/agents/concepts/runtime-components?view=foundry
-- Azure AI Foundry tools overview: https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/overview?view=foundry
-- Anthropic financial-analysis skills: https://github.com/anthropics/financial-services/tree/main/plugins/vertical-plugins/financial-analysis/skills
-- SEC EDGAR MCP package: https://github.com/stefanoamorelli/sec-edgar-mcp
-
-## 14. Moving from synthetic data to live vendor data
-
-To connect live FSI data providers:
+## 9. Moving from synthetic data to live vendor data
 
 1. Store vendor endpoints and secrets in Key Vault.
 2. Register vendor MCP tools or toolbox tools in the Foundry project.
 3. Expose each tool only through the scenario toolbox that needs it.
 4. Update the corresponding skill instructions to prefer live data over synthetic data.
-
-Candidate mappings:
 
 | Workflow need | Vendor MCP examples |
 |---|---|
@@ -305,12 +217,18 @@ Candidate mappings:
 | Transcripts and news | Aiera, MT Newswire |
 | Source documents | Box, Egnyte |
 
-## 15. Teardown
+## 10. Teardown
 
-Delete only the v3 resource group when retiring this iteration:
+Delete the environment's resource group:
 
 ```powershell
-az group delete --name rg-fsi-demo-v3 --yes --no-wait
+az group delete --name rg-<env> --yes --no-wait
 ```
 
-Do not delete `rg-fsi-demo` or `rg-fsi-demo-v2` unless intentionally retiring the earlier live versions.
+## 11. Official references
+
+- [Azure AI Foundry hosted agents](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry)
+- [Foundry Agent Service runtime components](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/runtime-components?view=foundry)
+- [Foundry tools overview](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/overview?view=foundry)
+- [Anthropic financial-analysis skills](https://github.com/anthropics/financial-services/tree/main/plugins/vertical-plugins/financial-analysis/skills)
+- [`sec-edgar-mcp`](https://github.com/stefanoamorelli/sec-edgar-mcp)

@@ -1,6 +1,6 @@
-"""Backend orchestration for the FSI multi-agent demo (v3, DEPLOYED hosted agents).
+"""Backend orchestration for the FSI multi-agent demo (DEPLOYED hosted agents).
 
-Each scenario is served by ONE Foundry HOSTED agent deployed into proj-fsi-demo-v3. For a
+Each scenario is served by ONE Foundry HOSTED agent in the target project. For a
 run the BFF invokes the agent's Responses endpoint in **background mode** (POST with
 ``background=true`` returns immediately, then we poll ``GET .../responses/{id}`` until the
 status is ``completed``). Background mode is required because long code_interpreter runs

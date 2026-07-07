@@ -13,6 +13,9 @@ param location string = 'eastus2'
 @description('Object ID of a user/group to also grant Foundry data-plane access (optional, for portal testing in ai.azure.com).')
 param developerPrincipalId string = ''
 
+@description('Model deployment name the hosted agents run on. Must match one of the deployments created on the Foundry account.')
+param agentModelDeploymentName string = 'gpt-5.1'
+
 var resourceGroupName = 'rg-${environmentName}'
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var tags = {
@@ -132,6 +135,13 @@ module containerApps 'modules/containerapps.bicep' = {
     logAnalyticsName: 'log-${environmentName}-${shortToken}'
     userAssignedIdentityId: identity.outputs.resourceId
     registryLoginServer: registry.outputs.registryLoginServer
+    apiEnv: [
+      { name: 'PROJECT_ENDPOINT', value: foundry.outputs.projectEndpoint }
+      { name: 'STORAGE_BLOB_ENDPOINT', value: storage.outputs.storageBlobEndpoint }
+      { name: 'ARTIFACTS_CONTAINER', value: 'artifacts' }
+      { name: 'AZURE_CLIENT_ID', value: identity.outputs.clientId }
+      { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.appInsightsConnectionString }
+    ]
   }
 }
 
@@ -141,6 +151,7 @@ output AZURE_AI_ACCOUNT_NAME string = foundry.outputs.aiAccountName
 output AZURE_AI_PROJECT_NAME string = foundry.outputs.projectName
 output AZURE_AI_PROJECT_ENDPOINT string = foundry.outputs.projectEndpoint
 output AZURE_AI_ACCOUNT_ENDPOINT string = foundry.outputs.accountEndpoint
+output AZURE_AI_MODEL_DEPLOYMENT_NAME string = agentModelDeploymentName
 output AZURE_CONTAINER_REGISTRY_NAME string = registry.outputs.registryName
 output AZURE_CONTAINER_REGISTRY_ENDPOINT string = registry.outputs.registryLoginServer
 output AZURE_STORAGE_ACCOUNT string = storage.outputs.storageAccountName

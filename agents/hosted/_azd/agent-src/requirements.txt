@@ -1,6 +1,6 @@
 # v3 Foundry HOSTED agent runtime (fsi_hosted_agent_v3.py + fsi_artifact_egress.py).
 #
-# Pinned to the exact stack validated in-process against rg-fsi-demo-v3:
+# Pinned to the exact stack validated in-process:
 # skills-over-MCP (FoundryToolbox.as_skills_provider) + native code_interpreter +
 # ToolApprovalMiddleware + server-side Blob artifact egress.
 #

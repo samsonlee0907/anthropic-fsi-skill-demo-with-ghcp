@@ -90,7 +90,7 @@ class ArtifactEgressMiddleware(AgentMiddleware):
         Foundry project endpoint used to build the OpenAI client for the Containers
         files API (``containers.files.list`` / ``content.retrieve``).
     blob_endpoint:
-        Storage account blob endpoint (e.g. ``https://stxzqm33pk.blob.core.windows.net``).
+        Storage account blob endpoint (e.g. ``https://<account>.blob.core.windows.net``).
         When falsy, files are still harvested and named in the sentinel but not uploaded
         (useful for local wiring tests without Storage RBAC).
     credential:

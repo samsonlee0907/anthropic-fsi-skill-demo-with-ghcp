@@ -18,10 +18,10 @@ import urllib.error
 
 from azure.identity import DefaultAzureCredential
 
-PROJECT_ENDPOINT = os.environ.get(
-    "PROJECT_ENDPOINT",
-    "https://aif66lhnuec.services.ai.azure.com/api/projects/proj-fsi-demo",
-).rstrip("/")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _common import require_project_endpoint  # noqa: E402
+
+PROJECT_ENDPOINT = require_project_endpoint()
 
 # Each scenario toolbox bundles Foundry-native tools the specialist agents share.
 # code_interpreter -> build formula-driven .xlsx / .pptx (openpyxl / python-pptx)

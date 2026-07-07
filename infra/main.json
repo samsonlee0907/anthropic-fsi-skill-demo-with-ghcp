@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "7679235331220052476"
+      "templateHash": "13441847407179532956"
     },
     "description": "FSI Multi-Agent Demo — subscription-scoped deployment: resource group + Foundry + supporting services + Container Apps."
   },
@@ -31,6 +31,13 @@
       "defaultValue": "",
       "metadata": {
         "description": "Object ID of a user/group to also grant Foundry data-plane access (optional, for portal testing in ai.azure.com)."
+      }
+    },
+    "agentModelDeploymentName": {
+      "type": "string",
+      "defaultValue": "gpt-5.1",
+      "metadata": {
+        "description": "Model deployment name the hosted agents run on. Must match one of the deployments created on the Foundry account."
       }
     }
   },
@@ -271,7 +278,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "7363552170881173488"
+              "templateHash": "9711235546229868372"
             },
             "description": "Azure AI Foundry account (AI Services) + project + serialized model deployments for the FSI multi-agent demo."
           },
@@ -296,18 +303,18 @@
               "type": "array",
               "defaultValue": [
                 {
-                  "name": "gpt-4o",
-                  "model": "gpt-4o",
-                  "version": "2024-11-20",
+                  "name": "gpt-5.1",
+                  "model": "gpt-5.1",
+                  "version": "2025-11-13",
                   "sku": "GlobalStandard",
-                  "capacity": 50
+                  "capacity": 150
                 },
                 {
-                  "name": "gpt-4o-mini",
-                  "model": "gpt-4o-mini",
-                  "version": "2024-07-18",
+                  "name": "gpt-5.4-mini",
+                  "model": "gpt-5.4-mini",
+                  "version": "2026-03-17",
                   "sku": "GlobalStandard",
-                  "capacity": 50
+                  "capacity": 150
                 },
                 {
                   "name": "text-embedding-3-large",
@@ -559,7 +566,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "14307692103842595160"
+              "templateHash": "6171594177924540117"
             },
             "description": "Storage account with blob containers for generated artifacts and synthetic datasets."
           },
@@ -592,8 +599,14 @@
               "properties": {
                 "minimumTlsVersion": "TLS1_2",
                 "allowBlobPublicAccess": false,
+                "allowSharedKeyAccess": false,
                 "supportsHttpsTrafficOnly": true,
-                "accessTier": "Hot"
+                "accessTier": "Hot",
+                "publicNetworkAccess": "Enabled",
+                "networkAcls": {
+                  "defaultAction": "Allow",
+                  "bypass": "AzureServices"
+                }
               }
             },
             {
@@ -962,6 +975,30 @@
           },
           "registryLoginServer": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'registry'), '2025-04-01').outputs.registryLoginServer.value]"
+          },
+          "apiEnv": {
+            "value": [
+              {
+                "name": "PROJECT_ENDPOINT",
+                "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.projectEndpoint.value]"
+              },
+              {
+                "name": "STORAGE_BLOB_ENDPOINT",
+                "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'storage'), '2025-04-01').outputs.storageBlobEndpoint.value]"
+              },
+              {
+                "name": "ARTIFACTS_CONTAINER",
+                "value": "artifacts"
+              },
+              {
+                "name": "AZURE_CLIENT_ID",
+                "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'identity'), '2025-04-01').outputs.clientId.value]"
+              },
+              {
+                "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
+              }
+            ]
           }
         },
         "template": {
@@ -1179,10 +1216,12 @@
         }
       },
       "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry')]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'identity')]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'monitoring')]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'registry')]",
-        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('resourceGroupName'))]"
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('resourceGroupName'))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'storage')]"
       ]
     }
   ],
@@ -1210,6 +1249,10 @@
     "AZURE_AI_ACCOUNT_ENDPOINT": {
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.accountEndpoint.value]"
+    },
+    "AZURE_AI_MODEL_DEPLOYMENT_NAME": {
+      "type": "string",
+      "value": "[parameters('agentModelDeploymentName')]"
     },
     "AZURE_CONTAINER_REGISTRY_NAME": {
       "type": "string",

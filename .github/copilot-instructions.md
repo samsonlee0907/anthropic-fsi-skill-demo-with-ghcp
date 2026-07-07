@@ -16,9 +16,9 @@ All bundled data is synthetic and for demo purposes only.
 1. **Design agents by scenario, not by skill.** There is exactly one hosted agent per business
    workflow, and each agent reaches its skills through a scenario **toolbox** (skills-over-MCP). Do
    not create one agent per skill. Current roster:
-   - `fsi-equity-v3`  -> toolbox `tb-equity-research` (Equity Research & Valuation, `.xlsx`)
-   - `fsi-ib-pitch-v3` -> toolbox `tb-ib-pitch` (IB Pitch / Deal Prep, `.pptx`)
-   - `fsi-pe-lbo-v3`  -> toolbox `tb-pe-lbo` (PE LBO Screening, `.xlsx`)
+   - `fsi-equity`  -> toolbox `tb-equity-research` (Equity Research & Valuation, `.xlsx`)
+   - `fsi-ib-pitch` -> toolbox `tb-ib-pitch` (IB Pitch / Deal Prep, `.pptx`)
+   - `fsi-pe-lbo`  -> toolbox `tb-pe-lbo` (PE LBO Screening, `.xlsx`)
 2. **Skills are governed Foundry skills**, registered centrally and bound to toolboxes -- never pasted
    into static agent prompts. The hosted runtime consumes them via
    `FoundryToolbox.as_skills_provider()` + `load_skill` (progressive disclosure over MCP).
@@ -35,63 +35,67 @@ All bundled data is synthetic and for demo purposes only.
 
 | Path | Purpose |
 |---|---|
-| `infra/main.bicep` (+ `infra/modules/*`) | Subscription-scoped IaC: RG, Foundry account/project, models, ACR, Storage, Key Vault, App Insights, Container Apps env, RBAC. |
-| `agents/skills/*.md` | Pinned Anthropic `SKILL.md` copies used as the source skill catalog. |
-| `agents/scripts/provision_skills.py` | Register each skill as a Foundry skill in the target project. |
+| `infra/main.bicep` (+ `infra/modules/*`) | Subscription-scoped IaC: RG, Foundry account/project, models, ACR, Storage, Key Vault, App Insights, Container Apps env, RBAC, and API/portal env wiring. |
+| `deploy.ps1` | Top-level one-command orchestrator (provision -> skills/toolboxes -> SEC EDGAR -> agents -> RBAC -> api/portal -> validate). `-Skip*` switches for partial re-runs. |
+| `scripts/*.ps1` | Deploy helpers: `set_azd_env_from_infra.ps1`, `grant_agent_rbac.ps1`, `deploy_sec_edgar.ps1`. |
+| `agents/scripts/provision_skills.py` | Register each skill as a Foundry skill. Skill content is fetched at runtime from a pinned Anthropic commit (`ANTHROPIC_SKILLS_REF`), not stored in-repo. |
 | `agents/scripts/create_toolboxes.py` / `bind_skills_to_toolboxes.py` | Create the 3 scenario toolboxes and bind + promote skill references. |
+| `agents/scripts/_common.py` | Shared `require_project_endpoint()` (fail-fast, no hardcoded default). |
 | `agents/hosted/fsi_hosted_agent_v3.py` | The single env-driven hosted-agent runtime for all 3 scenarios. |
 | `agents/hosted/fsi_artifact_egress.py` | `ArtifactEgressMiddleware`: harvests Code Interpreter files and uploads them to the private `artifacts` blob container, appending a `<<<ARTIFACT ...>>>` sentinel. |
 | `agents/hosted/_azd/` | `azd ai agent` project. `azure.yaml` declares the 3 services; `agent-src/` is the deployed copy of the runtime. |
 | `agents/mcp/sec-edgar/` | Dockerfile + HTTP server for the self-hosted SEC EDGAR remote MCP tool. |
-| `api/` | FastAPI BFF: invokes hosted agents (Responses background mode + poll), parses artifact sentinels, serves `/api/artifacts/{id}`. |
+| `api/` | FastAPI BFF: invokes hosted agents (Responses background mode + poll), parses artifact sentinels, serves `/api/artifacts/{id}`. Config is fail-fast (`PROJECT_ENDPOINT`, `STORAGE_BLOB_ENDPOINT` required). Synthetic dataset lives in `api/data`. |
 | `portal/` | Next.js branded portal (3 scenario tabs, streaming, artifact download). |
-| `docs/runbook.md` | Authoritative operations runbook -- endpoints, deploy, RBAC, gotchas, teardown. Read this first. |
+| `scripts/validate.py` | Generic post-deploy validator: runs all 3 scenarios against `API_BASE_URL`, asserts downloadable OOXML. |
+| `.env.example` | Canonical reference for every variable, grouped by phase. |
+| `docs/runbook.md` | Authoritative operations runbook -- naming, deploy, RBAC, gotchas, teardown. Read this first. |
 
 ## End-to-end provision + deploy order
 
-Always read `docs/runbook.md` before acting. High-level order:
+The one-command path is `deploy.ps1`; always read `docs/runbook.md` before acting. It runs
+this ordered flow (each step also has a documented manual equivalent in the runbook):
 
-1. **Prerequisites.** `az login` to subscription `6a7da9fe-e881-4d1a-bf1b-c5f4fc3530ac`; install `azd`
-   and the `azure.ai.agent` capability; ensure Foundry model quota in the target region (`eastus2`).
+1. **Prerequisites.** `az login`; install `azd` with the `azure.ai.agent` capability; ensure
+   Foundry model quota in the target region. Nothing is tied to a specific subscription or
+   region — everything derives from `environmentName` (`<env>`) and `location`.
 2. **Provision infra** (subscription-scoped Bicep):
    ```powershell
-   az deployment sub create --location eastus2 `
+   az deployment sub create --name fsi-<env> --location <location> `
      --template-file infra/main.bicep `
-     --parameters infra/main.parameters.json `
-     --parameters developerPrincipalId=<your-object-id>
+     --parameters environmentName=<env> location=<location> `
+                  developerPrincipalId=<your-object-id>
    ```
-   Change `environmentName` to deploy a fresh, isolated iteration (drives the RG name `rg-<env>` and
-   resource naming). Keep prior iterations (`rg-fsi-demo`, `-v2`, `-v3`) untouched.
+   A distinct `<env>` gives a fully isolated deployment (RG `rg-<env>`, all resources named
+   off it).
 3. **Register skills + toolboxes** against the new project:
-   `python agents/scripts/provision_skills.py`, then `create_toolboxes.py`, then
-   `bind_skills_to_toolboxes.py` (this also promotes the default toolbox version -- the MCP endpoint
-   serves the default version).
-4. **Deploy the SEC EDGAR MCP Container App** from `agents/mcp/sec-edgar` (build image to ACR, deploy
-   as a Container App behind a shared-secret header), then `azd env set SEC_EDGAR_MCP_URL <.../mcp>`.
-5. **Deploy the 3 hosted agents** from `agents/hosted/_azd` (see command below).
-6. **Build + deploy API and portal images** to the Container Apps (`fsi-api`, `fsi-portal`; bake the
-   API URL into the portal build).
-7. **Grant RBAC** (see runbook section 8) and **verify storage networking** (see gotchas).
-8. **Validate** the API path and the browser portal path.
+   `provision_skills.py` -> `create_toolboxes.py` -> `bind_skills_to_toolboxes.py` (also
+   promotes the default toolbox version — the MCP endpoint serves the default version).
+4. **(Optional) Deploy the SEC EDGAR MCP Container App** from `agents/mcp/sec-edgar`
+   (`scripts/deploy_sec_edgar.ps1`), then set `SEC_EDGAR_MCP_URL` / `FSI_MCP_KEY`.
+5. **Map infra outputs into the azd agent env** (`scripts/set_azd_env_from_infra.ps1`).
+6. **Deploy the 3 hosted agents** from `agents/hosted/_azd` (see command below).
+7. **Grant hosted-agent instance-identity RBAC** (`scripts/grant_agent_rbac.ps1`) and
+   **verify storage networking** (see gotchas).
+8. **Build + deploy API and portal images** (`fsi-api`, `fsi-portal`; bake the API URL into
+   the portal build). API env vars come from infra outputs.
+9. **Validate** (`scripts/validate.py`) and drive the browser portal path.
 
 ### Deploy the hosted agents
 
 ```powershell
-cd agents/hosted
-Copy-Item .\fsi_hosted_agent_v3.py .\_azd\agent-src\fsi_hosted_agent_v3.py -Force
-Copy-Item .\fsi_artifact_egress.py .\_azd\agent-src\fsi_artifact_egress.py -Force
+Copy-Item agents/hosted/fsi_hosted_agent_v3.py agents/hosted/_azd/agent-src/ -Force
+Copy-Item agents/hosted/fsi_artifact_egress.py agents/hosted/_azd/agent-src/ -Force
 # verify the copies match before deploying:
-Get-FileHash .\fsi_hosted_agent_v3.py, .\_azd\agent-src\fsi_hosted_agent_v3.py
+Get-FileHash agents/hosted/fsi_hosted_agent_v3.py, agents/hosted/_azd/agent-src/fsi_hosted_agent_v3.py
 
-cd .\_azd
+cd agents/hosted/_azd
 $env:GH_TOKEN = gh auth token; $env:GITHUB_TOKEN = $env:GH_TOKEN
 $env:AZD_AGENT_SKIP_ACR = "true"
-azd env set SEC_EDGAR_USER_AGENT "Your Name (you@example.com)"
-azd env set SEC_EDGAR_MCP_URL "https://<secedgar-mcp-containerapp>/mcp"
 
-azd deploy fsi-equity-v3
-azd deploy fsi-ib-pitch-v3
-azd deploy fsi-pe-lbo-v3
+azd deploy fsi-equity -e <env>
+azd deploy fsi-ib-pitch -e <env>
+azd deploy fsi-pe-lbo -e <env>
 ```
 
 ## Critical gotchas (these caused real, hard-to-diagnose failures)
@@ -130,8 +134,9 @@ azd deploy fsi-pe-lbo-v3
 
 ## Validation
 
-- API path: run the API validator (see `scripts/` and the session helpers) against `/api/run` and
-  confirm a real downloadable OOXML artifact (PK zip) with no fallback stages.
+- API path: `python scripts/validate.py` (reads `API_BASE_URL`) submits each scenario to
+  `/api/run` and asserts a real downloadable OOXML artifact (PK zip). Non-zero exit on any
+  failure, so it doubles as a CI gate.
 - UI path: drive the portal headlessly -- click a scenario card, submit a prompt, wait for
   `Complete`, download the artifact, and confirm it is valid OOXML.
 - Heavy single prompts combining deep SEC retrieval + full multi-sheet DCF can 408-timeout at the

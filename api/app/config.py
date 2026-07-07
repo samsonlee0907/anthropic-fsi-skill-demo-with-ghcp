@@ -1,30 +1,50 @@
-"""Scenario / agent configuration for the v3 hosted-agent BFF.
+"""Scenario / agent configuration for the hosted-agent BFF.
 
-v3 invokes THREE deployed Foundry hosted agents (fsi-equity-v3 / fsi-ib-pitch-v3 /
-fsi-pe-lbo-v3) over their Responses endpoints in background mode; each agent loads its
-Anthropic skills over toolbox MCP, builds artifacts with native code_interpreter, and its
-ArtifactEgressMiddleware uploads them to the private `artifacts` blob container, appending
-a `<<<ARTIFACT name=<f> blob=<container>/<path>>>>` sentinel to the response text.
+The BFF invokes the deployed Foundry hosted agents (one per scenario) over their
+Responses endpoints in background mode; each agent loads its Anthropic skills over
+toolbox MCP, builds artifacts with native code_interpreter, and its
+ArtifactEgressMiddleware uploads them to the private `artifacts` blob container,
+appending a `<<<ARTIFACT name=<f> blob=<container>/<path>>>>` sentinel to the
+response text.
+
+All resource-specific values come from the environment (set by the Container App
+from the infra outputs). No resource names are hardcoded, so the same image
+deploys unchanged against any environment.
 """
 import os
 from pathlib import Path
 
-PROJECT_ENDPOINT = os.environ.get(
+
+def _require_env(name: str, hint: str) -> str:
+    val = os.environ.get(name, "").strip()
+    if not val:
+        raise RuntimeError(
+            f"Required environment variable {name} is not set. {hint}"
+        )
+    return val
+
+
+# Foundry project endpoint the BFF calls (form:
+# https://<account>.services.ai.azure.com/api/projects/<project>).
+PROJECT_ENDPOINT = _require_env(
     "PROJECT_ENDPOINT",
-    "https://aifxzqm33pk.services.ai.azure.com/api/projects/proj-fsi-demo-v3",
+    "Set it to the AZURE_AI_PROJECT_ENDPOINT infra output.",
 ).rstrip("/")
 
 # Private blob storage the hosted agents egress artifacts to; the BFF streams them back.
-STORAGE_BLOB_ENDPOINT = os.environ.get(
-    "STORAGE_BLOB_ENDPOINT", "https://stxzqm33pk.blob.core.windows.net"
+STORAGE_BLOB_ENDPOINT = _require_env(
+    "STORAGE_BLOB_ENDPOINT",
+    "Set it to the AZURE_STORAGE_BLOB_ENDPOINT infra output "
+    "(form: https://<account>.blob.core.windows.net).",
 ).rstrip("/")
 ARTIFACTS_CONTAINER = os.environ.get("ARTIFACTS_CONTAINER", "artifacts")
 
-# Scenario key -> deployed hosted-agent name. Note equity-research -> fsi-equity-v3.
+# Scenario key -> deployed hosted-agent name. Names are unversioned so the same
+# config serves every environment (each environment is its own Foundry project).
 AGENT_NAMES = {
-    "equity-research": os.environ.get("AGENT_EQUITY", "fsi-equity-v3"),
-    "ib-pitch": os.environ.get("AGENT_IB", "fsi-ib-pitch-v3"),
-    "pe-lbo": os.environ.get("AGENT_LBO", "fsi-pe-lbo-v3"),
+    "equity-research": os.environ.get("AGENT_EQUITY", "fsi-equity"),
+    "ib-pitch": os.environ.get("AGENT_IB", "fsi-ib-pitch"),
+    "pe-lbo": os.environ.get("AGENT_LBO", "fsi-pe-lbo"),
 }
 
 
@@ -93,7 +113,8 @@ DEFAULT_PROMPTS = {
 
 
 def _data_dir() -> Path:
-    return Path(os.environ.get("DATA_DIR", str(Path(__file__).resolve().parents[2] / "data" / "synthetic")))
+    # Single source of truth: api/data (also what the Docker image ships as /app/data).
+    return Path(os.environ.get("DATA_DIR", str(Path(__file__).resolve().parents[1] / "data")))
 
 
 def load_data_context() -> str:

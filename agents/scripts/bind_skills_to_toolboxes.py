@@ -12,7 +12,7 @@ multiple toolboxes; the single central skill is the source of truth.
 
 SEC EDGAR is now bound as a GOVERNED TOOLBOX MCP TOOL (type "mcp"), not imported
 in-process inside each hosted-agent container. The self-hosted `sec-edgar-mcp`
-streamable-HTTP server (Container App `ca-secedgar-mcp-fsi-demo-v3`) is registered
+streamable-HTTP server (Container App `ca-secedgar-mcp-<env>`) is registered
 with `server_url` + a shared-secret `headers` entry, so the toolbox governs which
 SEC tools each scenario can call (`allowed_tools`) and the endpoint stays gated.
 Configured via env:
@@ -39,10 +39,10 @@ import urllib.request
 
 from azure.identity import DefaultAzureCredential
 
-PROJECT_ENDPOINT = os.environ.get(
-    "PROJECT_ENDPOINT",
-    "https://aif66lhnuec.services.ai.azure.com/api/projects/proj-fsi-demo",
-).rstrip("/")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _common import require_project_endpoint  # noqa: E402
+
+PROJECT_ENDPOINT = require_project_endpoint()
 
 # Compact, scenario-safe SEC EDGAR surface exposed through the toolbox MCP tool.
 # These map to the tools the in-container function surface used to expose; the
