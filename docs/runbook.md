@@ -34,12 +34,17 @@ All bundled data is synthetic and for demo purposes only.
   `modelDeployments` param (default: a single `gpt-5.1` GlobalStandard deployment at 150K TPM).
   Add models or change capacity/region via that param to fit your quota; keep
   `agentModelDeploymentName` in the list.
-- `az`, `azd` (with the `azure.ai.agent` capability — enable it with
-  `azd extension install microsoft.azd.ai.agent`, verify with `azd ai agent --help`),
+- `az`, `azd` (with the Foundry agents extension — install with
+  `azd extension install azure.ai.agents`, verify with `azd ai agent --help`),
   `gh` (authenticated), Python 3.11+.
-- `az login`; `pip install azure-ai-projects azure-identity`.
+- `az login`; `pip install -r agents/scripts/requirements.txt` (pinned deps for the
+  provisioning scripts). Multi-subscription users: `az account set --subscription <id>`
+  or pass `-SubscriptionId <id>` to `deploy.ps1`.
 - `deploy.ps1` auto-derives your object ID via `az ad signed-in-user show`; pass `-PrincipalId`
   only to override (or when running the raw `az deployment` path with `developerPrincipalId`).
+- The infra step prints benign warnings you can ignore: a Bicep upgrade notice and
+  `BCP081` "resource type does not have types available" for the preview
+  `Microsoft.CognitiveServices` API version — these do not block deployment.
 
 ## 3. End-to-end deploy (what `deploy.ps1` does)
 

@@ -1,0 +1,7 @@
+# Python dependencies for the Foundry provisioning scripts in this folder
+# (provision_skills.py, create_toolboxes.py, bind_skills_to_toolboxes.py).
+# Pinned to the versions validated by a clean-room deploy so a fresh clone
+# reproduces the same result. Install with:
+#     pip install -r agents/scripts/requirements.txt
+azure-ai-projects==2.2.0
+azure-identity==1.23.0

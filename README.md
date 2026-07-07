@@ -33,11 +33,24 @@ self-hosted remote MCP tool.
 
 - An Azure subscription with **Foundry model quota** in your target region (default
   `eastus2`) for the model deployments in `infra/modules/foundry.bicep`.
-- Tools on PATH: **Azure CLI (`az`)**, **Azure Developer CLI (`azd`)** with the
-  `azure.ai.agent` capability, **`gh`** (GitHub CLI, authenticated), **Python 3.11+**.
-- `az login` to the target subscription.
-- Python deps for the provisioning scripts:
-  `pip install azure-ai-projects azure-identity`.
+- Tools on PATH: **Azure CLI (`az`)**, **Azure Developer CLI (`azd`)**, **`gh`** (GitHub
+  CLI, authenticated — `deploy.ps1` reads `gh auth token` to let `azd` deploy the hosted
+  agents), **Python 3.11+**.
+- The azd **Foundry agents** extension, which provides the hosted-agent `azd deploy` and
+  `azd ai agent` commands:
+  ```powershell
+  azd extension install azure.ai.agents   # verify: azd ai agent --help
+  ```
+- `az login` to the target subscription. If you have more than one subscription, either
+  `az account set --subscription <id>` first or pass `-SubscriptionId <id>` to `deploy.ps1`.
+- Python deps for the provisioning scripts (pinned):
+  ```powershell
+  pip install -r agents/scripts/requirements.txt
+  ```
+
+> `deploy.ps1` preflights these: it fails fast with the exact fix command if the
+> `azure.ai.agents` extension or the Python deps are missing, **before** provisioning any
+> billable infra.
 
 ### Deploy
 

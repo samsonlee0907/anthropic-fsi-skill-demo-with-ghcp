@@ -101,6 +101,26 @@ function Invoke-AcrBuild {
 
 Write-Host "== Preflight ==" -ForegroundColor Cyan
 'az', 'azd', 'python', 'gh' | ForEach-Object { Require-Tool $_ }
+
+# Fail fast if the provisioning scripts' Python deps are missing. Without this the run
+# provisions (and bills) infra in step 1, then dies with a bare ModuleNotFoundError in
+# step 2. Point the user straight at the pinned requirements file instead.
+if (-not $SkipSkills) {
+    python -c "import azure.ai.projects, azure.identity" 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Missing Python dependencies for the provisioning scripts. Run: pip install -r agents/scripts/requirements.txt"
+    }
+}
+
+# Verify the azd Foundry-agents extension is present (provides hosted-agent `azd deploy`
+# and `azd ai agent`). Skip the check when not deploying agents.
+if (-not $SkipAgents) {
+    $agentsExt = azd extension list --installed 2>$null | Select-String -Pattern 'azure\.ai\.agents'
+    if (-not $agentsExt) {
+        throw "azd 'azure.ai.agents' extension not installed. Run: azd extension install azure.ai.agents"
+    }
+}
+
 if ($SubscriptionId) { az account set --subscription $SubscriptionId | Out-Null }
 if (-not $PrincipalId) { $PrincipalId = az ad signed-in-user show --query id -o tsv }
 az config set auth.useAzCliAuth true 2>$null | Out-Null
