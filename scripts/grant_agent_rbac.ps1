@@ -53,10 +53,10 @@ if ((-not $PrincipalIds -or $PrincipalIds.Count -eq 0) -and $ProjectEndpoint) {
                 Write-Host "  $name -> $oid"
                 $found += $oid
             } else {
-                Write-Warning "  $name: no instance_identity.principal_id found"
+                Write-Warning "  ${name}: no instance_identity.principal_id found"
             }
         } catch {
-            Write-Warning "  $name: lookup failed ($($_.Exception.Message))"
+            Write-Warning "  ${name}: lookup failed ($($_.Exception.Message))"
         }
     }
     $PrincipalIds = @($found | Where-Object { $_ })
