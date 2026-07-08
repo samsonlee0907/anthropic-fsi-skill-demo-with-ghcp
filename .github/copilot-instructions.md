@@ -22,16 +22,22 @@ All bundled data is synthetic and for demo purposes only.
 2. **Skills are governed Foundry skills**, registered centrally and bound to toolboxes -- never pasted
    into static agent prompts. The hosted runtime consumes them via
    `FoundryToolbox.as_skills_provider()` + `load_skill` (progressive disclosure over MCP).
-3. **Use native Foundry tools for execution.** `code_interpreter` and `web_search` come from
-   `FoundryChatClient` (native), NOT the toolbox MCP tool of the same name -- the preview toolbox
-   Code Interpreter returns server-side 500s. Both are ALSO listed in each scenario toolbox so the
-   toolbox is the single unified, governed, portal-visible **catalog** (tools + skills), but the
-   runtime consumes the toolbox as a skills provider only (`load_tools=False`) and executes those
-   two tools natively -- cataloguing them does not change runtime execution or reintroduce the
-   preview `load_tools=True` defects (post-`load_skill` RemoteProtocolError / native-tool suppression).
+3. **Route tools through the toolbox; keep `code_interpreter` native.** `web_search` (bound as
+   `web`) and the SEC EDGAR MCP tool EXECUTE THROUGH each scenario toolbox: the runtime opens a
+   SECOND `FoundryToolbox` connection with `load_tools=True` and sets `.allowed_tools = {"web"} ∪
+   {sec_edgar___*}` post-construction, then puts it in the agent `tools` list. So the toolbox is
+   the single unified, governed, portal-visible tool surface -- not just a catalog.
+   `code_interpreter` is the ONE exception: it comes from `FoundryChatClient` (native) and is
+   EXCLUDED from the allow-list, because the preview toolbox-MCP `code_interpreter` returns a
+   reproducible server-side 500 (verified live) and would otherwise shadow the working native
+   tool. It is still listed in each toolbox catalog for a complete inventory. The skills path is
+   unchanged: a first `load_tools=False` toolbox consumed via `as_skills_provider()` + `load_skill`,
+   connected with `async with skills_toolbox:` in `main()`. Every toolbox MCP request must carry
+   the header `Foundry-Features: Toolboxes=V1Preview`.
 4. **SEC EDGAR is a self-hosted REMOTE MCP tool**, not in-container code. `stefanoamorelli/sec-edgar-mcp`
-   runs as its own Container App (built from `agents/mcp/sec-edgar`); the agents attach it as a
-   Foundry-native remote MCP tool and the gateway injects a shared-secret header (`x-fsi-mcp-key`).
+   runs as its own Container App (built from `agents/mcp/sec-edgar`); it is registered in each
+   scenario toolbox as an `mcp` tool and EXECUTED THROUGH the toolbox (namespaced `sec_edgar___*`,
+   see principle 3). The Foundry gateway injects a shared-secret header (`x-fsi-mcp-key`).
    Toggle it with the `SEC_EDGAR_MCP_URL` azd env var. Upstream license is AGPL-3.0.
 
 ## Repository map
@@ -114,8 +120,12 @@ azd deploy fsi-pe-lbo -e <env>
 - **Always sync the runtime into `_azd/agent-src` before `azd deploy`.** The source of truth is
   `agents/hosted/*.py`; the deployed copy is `agents/hosted/_azd/agent-src/*.py`. Verify with
   `Get-FileHash`. Deploying a stale copy silently ships old behavior.
-- **Toolbox is connected via `async with toolbox:` in `main()`, NOT placed in the agent `tools`
-  list.** Putting the toolbox in `tools` suppresses the native `code_interpreter` / `web_search`.
+- **Two toolbox connections; `code_interpreter` stays native.** The *skills* toolbox
+  (`load_tools=False`, `as_skills_provider()`) is connected via `async with skills_toolbox:` in
+  `main()`. The *tools* toolbox (`load_tools=True`, `.allowed_tools = {"web"} ∪ {sec_edgar___*}`)
+  goes in the agent `tools` list and routes web_search + SEC EDGAR through the toolbox. Do NOT add
+  `code_interpreter` to the allow-list — the preview toolbox CI 500s; run it natively via
+  `FoundryChatClient.get_code_interpreter_tool()`.
 - **Invoke hosted agents with Responses background mode + poll**, not plain `stream=false`. Plain
   non-streaming holds the connection open and the Foundry gateway disconnects on long Code
   Interpreter tasks. Submit `POST {agentEndpoint}/openai/responses?api-version=v1` with

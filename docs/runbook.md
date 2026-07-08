@@ -191,8 +191,15 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   missing RBAC, so it is easy to misdiagnose. `infra/modules/storage.bicep` keeps
   `publicNetworkAccess=Enabled`; RBAC alone is not sufficient.
 - **Sync the runtime into `_azd/agent-src` before `azd deploy`** (verify with `Get-FileHash`).
-- **The toolbox is connected via `async with toolbox:` in `main()`, NOT placed in the agent
-  `tools` list.** Putting it in `tools` suppresses the native `code_interpreter`/`web_search`.
+- **Two toolbox connections, one native tool.** The runtime opens the scenario toolbox
+  **twice**: (1) a `load_tools=False` *skills* connection consumed via `as_skills_provider()`
+  and entered with `async with skills_toolbox:` in `main()` (so `load_skill` works); and (2) a
+  `load_tools=True` *tools* connection placed in the agent's `tools` list with
+  `allowed_tools = {web} ∪ {sec_edgar___*}`, which routes `web_search` + SEC EDGAR **through
+  the governed toolbox**. `code_interpreter` is deliberately EXCLUDED from that allow-list and
+  executed as the Foundry-native hosted tool — the preview toolbox `code_interpreter` returns
+  a reproducible server-side 500, and excluding it also stops the broken toolbox CI from
+  shadowing the working native one. Do NOT add `code_interpreter` to the allow-list.
 - **Invoke hosted agents with Responses background mode + poll**, not plain `stream:false`.
   Background requires `store:true`. The final text carries the `<<<ARTIFACT ...>>>` sentinel.
 - **The host strips Code Interpreter content types** from the outer `/responses` output, so

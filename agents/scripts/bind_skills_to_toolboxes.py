@@ -101,18 +101,23 @@ def _base_tools() -> list[dict]:
     the self-hosted SEC EDGAR MCP server -- alongside the scenario's skills. This
     gives one unified, portal-visible tool + skill inventory per scenario.
 
-    IMPORTANT -- catalog vs. runtime execution: binding `code_interpreter` /
-    `web_search` here makes them part of the governed CATALOG only. The hosted-agent
-    runtime (fsi_hosted_agent_v3.py) consumes this toolbox as a SKILLS provider
-    (`as_skills_provider()`, `load_tools=False`) and EXECUTES `code_interpreter` /
-    `web_search` as the reliable Foundry-native hosted tools. It never invokes them
-    THROUGH the toolbox MCP, so listing them here does NOT reintroduce the preview
-    defects (toolbox-MCP `code_interpreter` 500 / post-`load_skill`
-    RemoteProtocolError) and does NOT suppress the native hosted tools. Catalog and
-    runtime stay consistent with no regression.
+    IMPORTANT -- catalog vs. runtime execution:
+      * `web_search` (bound as `web`) and the SEC EDGAR MCP server ARE executed
+        THROUGH this toolbox at runtime. The hosted-agent runtime
+        (fsi_hosted_agent_v3.py) opens a second toolbox connection with
+        `load_tools=True` and an `allowed_tools` allow-list of `web` + `sec_edgar___*`,
+        so those tools run over the governed toolbox MCP endpoint — the toolbox is the
+        single, unified, governed tool surface.
+      * `code_interpreter` is bound here for a COMPLETE, portal-visible catalog, but it
+        is EXCLUDED from the runtime allow-list and executed as the Foundry-native
+        hosted tool instead. The preview toolbox-MCP `code_interpreter` returns a
+        reproducible server-side 500 (verified live), so the native sandbox builds the
+        `.xlsx` / `.pptx` deliverables. Excluding it from the allow-list also prevents
+        the broken toolbox `code_interpreter` from shadowing the working native one.
 
-    SEC EDGAR IS consumed through the toolbox at runtime (as a hosted remote-MCP
-    tool), so it is a real, callable catalog entry when SEC_EDGAR_MCP_URL is set.
+    Catalog and runtime therefore stay consistent: everything a scenario can do is
+    listed here, web/SEC execute through the toolbox, and only code_interpreter is
+    served natively (by necessity).
     """
     tools: list[dict] = [
         {"type": "code_interpreter"},

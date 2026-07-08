@@ -16,26 +16,26 @@ How this differs from the v2 in-process module (``fsi_scenario_agent.py``, kept 
    disclosure, SEP-2640) — native skill consumption straight off the governed
    toolbox catalog.
 
-2. **Public filing grounding is a GOVERNED, SELF-HOSTED MCP TOOL.** SEC EDGAR is no
-   longer imported in-process in this container. Instead the ``sec-edgar-mcp`` server
-   runs as its own Container App (``ca-secedgar-mcp-<env>``) and is consumed at
-   runtime as a **Foundry-native hosted (remote) MCP tool** via
-   ``FoundryChatClient.get_mcp_tool(name="sec_edgar", url=..., headers=..., allowed_tools=...,
-   approval_mode="never_require")``. The Foundry Responses gateway connects to the remote
-   server and injects our shared-secret header at request time, so the tool coexists
-   cleanly with the native ``code_interpreter``/``web_search`` hosted tools. (Surfacing
-   the same server as a *client-side* toolbox ``load_tools=True`` FunctionTool instead
-   suppresses the native hosted tools — the model can no longer call code_interpreter —
-   so the hosted remote-MCP path is used.) The same server is ALSO registered in each
-   scenario toolbox as an ``mcp`` tool, keeping the toolbox the governed, discoverable
-   catalog. Broader live web grounding uses the Foundry-native ``web_search`` tool.
+2. **web_search and SEC EDGAR execute THROUGH the governed toolbox.** A second
+   :class:`FoundryToolbox` connection (``load_tools=True``, ``allowed_tools`` restricted
+   to ``web`` + ``sec_edgar___*``) is placed in the agent's ``tools`` list, so the model
+   invokes web search and SEC EDGAR filings as client-side function tools whose
+   execution is routed over the scenario toolbox MCP endpoint. The toolbox is therefore
+   the single, unified, governed tool surface — not merely a catalog. The self-hosted
+   ``sec-edgar-mcp`` server (``ca-secedgar-mcp-<env>``) is registered in each scenario
+   toolbox as an ``mcp`` tool and reached this way; ``web_search`` is registered as the
+   ``web`` tool. The mandatory ``Foundry-Features: Toolboxes=V1Preview`` header is set on
+   the toolbox HTTP client.
 
 3. **code_interpreter is the Foundry-native Responses sandbox tool**
-   (``FoundryChatClient.get_code_interpreter_tool``), NOT the toolbox's. The
-   toolbox-MCP ``code_interpreter`` tool returns a reproducible server-side ``500``
-   in preview (confirmed on both v2 and fresh v3 toolboxes), so it is intentionally
-   NOT bound to the v3 toolboxes; the reliable native sandbox builds the
-   formula-driven ``.xlsx`` / ``.pptx`` deliverables instead.
+   (``FoundryChatClient.get_code_interpreter_tool``), NOT the toolbox's, and is the ONE
+   tool kept native. The toolbox-MCP ``code_interpreter`` tool returns a reproducible
+   server-side ``500`` in preview (confirmed live on this project, even with
+   ``container: {type: auto}`` and the ``Foundry-Features`` header), so it is excluded
+   from the tools-toolbox ``allowed_tools`` and the reliable native sandbox builds the
+   formula-driven ``.xlsx`` / ``.pptx`` deliverables instead. Excluding it also avoids a
+   name collision that would let the broken toolbox ``code_interpreter`` shadow the
+   working native one.
 
 4. **Artifacts egress server-side to Blob Storage.** The ``ResponsesHostServer``
    HTTP wrapper passes text content but strips code_interpreter file citations /
@@ -146,6 +146,17 @@ SEC_EDGAR_DEEP_TOOLS: Final = [
     "get_company_facts",
 ]
 
+# Every toolbox MCP request must carry this header or the endpoint rejects the call
+# ("Foundry-Features: Toolboxes=V1Preview"). FoundryToolbox's auth flow forwards the
+# platform per-request headers but does not statically set this one, so the runtime adds
+# it to the tools-toolbox HTTP client explicitly (belt-and-suspenders in the hosted env).
+TOOLBOX_FEATURES_HEADER: Final = ("Foundry-Features", "Toolboxes=V1Preview")
+
+# The web_search tool's name as bound in each scenario toolbox
+# (bind_skills_to_toolboxes.py -> {"type": "web_search", "name": "web"}). MCP-sourced
+# SEC tools are namespaced by the server_label with THREE underscores: sec_edgar___<tool>.
+TOOLBOX_WEB_TOOL: Final = "web"
+
 DISCLAIMER: Final = (
     "All outputs are AI-generated for demonstration only using synthetic or "
     "publicly available data. Not investment advice."
@@ -174,9 +185,10 @@ def _system_prompt() -> str:
         "You have a governed library of specialist skills available through your "
         "toolbox via the load_skill tool (each skill's name and description is "
         "listed for you). You also have a code_interpreter tool (a sandboxed Python "
-        "environment with openpyxl and python-pptx), governed SEC EDGAR tools (loaded "
-        "from your toolbox) for public-company filings and XBRL financials, and a "
-        "web_search tool for broader grounding.\n\n"
+        "environment with openpyxl and python-pptx), governed SEC EDGAR tools "
+        "(named sec_edgar___* and routed through your toolbox) for public-company "
+        "filings and XBRL financials, and a web tool (web search) for broader "
+        "grounding.\n\n"
         "Workflow for EVERY request:\n"
         "1. Decide which skill(s) apply and call load_skill to load their full "
         "instructions BEFORE doing the work. The text returned by load_skill is "
@@ -187,12 +199,13 @@ def _system_prompt() -> str:
         "Excel/PowerPoint formatting conventions.\n"
         "3. For real public-company references, prefer the compact SEC EDGAR toolbox "
         "tools over web search when you need company metadata, recent 10-K/10-Q/8-K "
-        "filing metadata, or selected XBRL metrics. Start with get_company_info and "
-        "get_recent_filings; use get_key_metrics only for a small set of named "
-        "metrics. Avoid broad/full filing extraction unless the user explicitly asks "
-        "for filing sections. Always cite the SEC URL, form type, and filing date "
-        "returned by the tool. Use web_search only for market context not available "
-        "from filings.\n"
+        "filing metadata, or selected XBRL metrics. Start with "
+        "sec_edgar___get_company_info and sec_edgar___get_recent_filings; use "
+        "sec_edgar___get_key_metrics only for a small set of named metrics. Avoid "
+        "broad/full filing extraction unless the user explicitly asks for filing "
+        "sections. Always cite the SEC URL, form type, and filing date returned by "
+        "the tool. Use the web tool only for market context not available from "
+        "filings.\n"
         "4. Use the code_interpreter tool to build the actual .xlsx / .pptx "
         "deliverable and save it under /mnt/data. Use real cell formulas, not "
         "hardcoded values. If a loaded skill says to write a Python script and run it "
@@ -230,56 +243,12 @@ def _disable_skill_tool_approval(provider) -> None:
     provider._create_tools = _no_approval
 
 
-def _sec_edgar_mcp_tool(client):
-    """Build the Foundry-native hosted (remote) SEC EDGAR MCP tool, or None.
-
-    Returns ``client.get_mcp_tool(...)`` pointing at the self-hosted sec-edgar-mcp
-    Container App. This is a SERVER-SIDE hosted MCP tool: the Foundry Responses
-    gateway connects to the remote server and injects our shared-secret header at
-    request time, so it coexists cleanly with the native code_interpreter/web_search
-    tools (unlike a client-side toolbox load_tools=True surface, which suppresses the
-    native hosted tools). The same server is also registered in the scenario toolbox
-    (governed catalog); this is the runtime consumption path.
-
-    Config (env):
-      SEC_EDGAR_MCP_URL     full MCP URL of the hosted server (e.g. https://.../mcp)
-      FSI_MCP_KEY           shared secret expected by the server middleware
-      FSI_MCP_KEY_HEADER    header name carrying the secret (default x-fsi-mcp-key)
-      SEC_EDGAR_DEEP_TOOLS  "true" to also allow slower full-filing/full-statement tools
-    Returns None (SEC disabled) if SEC_EDGAR_MCP_URL is not set.
-    """
-    url = os.environ.get("SEC_EDGAR_MCP_URL", "").strip()
-    if not url:
-        logger.warning("SEC_EDGAR_MCP_URL not set; SEC EDGAR MCP tool disabled")
-        return None
-    key = os.environ.get("FSI_MCP_KEY", "").strip()
-    header = os.environ.get("FSI_MCP_KEY_HEADER", "x-fsi-mcp-key").strip()
-    headers = {header: key} if key else None
-
-    allowed = list(SEC_EDGAR_COMPACT_TOOLS)
-    if _env_bool("SEC_EDGAR_DEEP_TOOLS", default=False):
-        allowed += SEC_EDGAR_DEEP_TOOLS
-
-    return client.get_mcp_tool(
-        name="sec_edgar",
-        url=url,
-        description=(
-            "SEC EDGAR public-company filings and XBRL financials (self-hosted "
-            "sec-edgar-mcp server). Use for company metadata, recent 10-K/10-Q/8-K "
-            "filing metadata, and selected XBRL metrics."
-        ),
-        approval_mode="never_require",
-        allowed_tools=allowed,
-        headers=headers,
-    )
-
-
 async def _prewarm_skills(provider) -> None:
     """Fetch + cache every toolbox skill's body at startup, while the toolbox MCP
     session is freshly connected in THIS task.
 
     Why this exists: ``as_skills_provider()`` builds ``MCPSkill`` objects bound to the
-    toolbox's long-lived MCP ``ClientSession`` (opened by ``async with toolbox:`` in
+    toolbox's long-lived MCP ``ClientSession`` (opened by ``async with skills_toolbox:`` in
     ``main()``). ``load_skill`` calls ``MCPSkill.get_content()``, which issues a
     ``resources/read`` on that session. In the deployed :class:`ResponsesHostServer` the
     per-request agent invocation runs in a DIFFERENT asyncio task than the one that
@@ -316,33 +285,51 @@ async def _prewarm_skills(provider) -> None:
     logger.info("skill prewarm: %d/%d skill bodies cached", warmed, len(skills))
 
 
+def _toolbox_tool_allowlist() -> set[str]:
+    """Toolbox tool names whose EXECUTION the runtime routes through the toolbox MCP.
+
+    We expose ``web_search`` (bound as ``web``) and the SEC EDGAR MCP tools
+    (namespaced ``sec_edgar___<tool>``) as client-side function tools off the scenario
+    toolbox, so their execution is governed by the toolbox — the single unified tool
+    surface. ``code_interpreter`` is deliberately EXCLUDED from this allow-list: the
+    preview toolbox-MCP ``code_interpreter`` returns a reproducible server-side ``500``
+    (verified live on this project, even with ``container: {type: auto}`` and the
+    ``Foundry-Features`` header), so it runs as the reliable Foundry-native hosted tool
+    instead. Excluding it here also prevents a name collision in which the broken
+    toolbox ``code_interpreter`` would shadow the working native one.
+    """
+    allow: set[str] = {TOOLBOX_WEB_TOOL}
+    sec = list(SEC_EDGAR_COMPACT_TOOLS)
+    if _env_bool("SEC_EDGAR_DEEP_TOOLS", default=False):
+        sec += SEC_EDGAR_DEEP_TOOLS
+    allow.update(f"sec_edgar___{t}" for t in sec)
+    return allow
+
+
 def build_agent(
     credential: DefaultAzureCredential | None = None,
 ) -> tuple[Agent, FoundryToolbox, object]:
     """Construct the scenario hosted agent from environment configuration.
 
-    Returns the agent and its toolbox. The caller MUST enter the returned toolbox as an
-    async context manager (``async with toolbox:``) before serving requests: the toolbox
-    is NOT in the agent's ``tools`` list (that would suppress native code_interpreter),
-    so its MCP session is not connected by the agent's own lifecycle. Connecting it via
-    the context manager is what makes ``as_skills_provider()`` skill discovery work.
+    Returns ``(agent, skills_toolbox, skills_provider)``. The caller MUST enter the
+    returned ``skills_toolbox`` as an async context manager (``async with``) before
+    serving requests so ``as_skills_provider()`` skill discovery works (its MCP session
+    is not otherwise connected). A SECOND toolbox connection (for web_search + SEC EDGAR
+    execution) is placed in the agent's ``tools`` list and connected by the agent's own
+    lifecycle — see the tools section below.
     """
     endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
     model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     cred = credential or DefaultAzureCredential()
     blob_endpoint = os.environ.get("STORAGE_BLOB_ENDPOINT")
 
-    # Toolbox MCP: consumed for SKILLS ONLY via as_skills_provider() -> load_skill
-    # progressive disclosure over MCP. load_tools=False is REQUIRED: setting it True to
-    # surface the toolbox's bound MCP tools as client-side FunctionTools suppresses the
-    # native hosted code_interpreter/web_search tools (the model can no longer call them
-    # and hallucinates file creation). So the toolbox stays the governed skills + SEC
-    # catalog, skills load natively over MCP, and the SEC EDGAR MCP server is consumed at
-    # runtime as a Foundry-native hosted (remote) MCP tool built below — which coexists
-    # cleanly with the native code_interpreter/web_search hosted tools.
-    toolbox = FoundryToolbox(cred, token_scope=AI_SCOPE, load_tools=False)
-
     client = FoundryChatClient(project_endpoint=endpoint, model=model, credential=cred)
+
+    # --- Toolbox connection #1: SKILLS provider -------------------------------------
+    # Consumed for SKILLS ONLY via as_skills_provider() -> load_skill progressive
+    # disclosure over MCP (SEP-2640). load_tools=False keeps this connection's tools off
+    # the agent surface; skill bodies are prewarmed at startup (see _prewarm_skills).
+    skills_toolbox = FoundryToolbox(cred, token_scope=AI_SCOPE, load_tools=False)
 
     # SkillsProvider registers load_skill/read_skill_resource/run_skill_script with
     # approval_mode="always_require". The canonical auto-approver, ToolApprovalMiddleware,
@@ -352,44 +339,51 @@ def build_agent(
     # the provider's tools directly (approval_mode=None, the FunctionTool default): skills
     # then load inline with no approval round-trip and no session. Equivalent to
     # auto-approving every skill tool, which is what we want for unattended hosting.
-    skills_provider = toolbox.as_skills_provider()
+    skills_provider = skills_toolbox.as_skills_provider()
     _disable_skill_tool_approval(skills_provider)
 
-    # SEC EDGAR = Foundry-native hosted (remote) MCP tool. The gateway connects to our
-    # self-hosted sec-edgar-mcp Container App and injects the shared-secret header; no SEC
-    # code runs in this agent image. None if SEC_EDGAR_MCP_URL is unset (SEC disabled).
-    sec_mcp = _sec_edgar_mcp_tool(client)
+    # --- Toolbox connection #2: TOOL execution (web_search + SEC EDGAR) --------------
+    # A SECOND connection to the SAME scenario toolbox, consumed as client-side function
+    # tools but restricted with allowed_tools to web_search (`web`) + the SEC EDGAR MCP
+    # tools (`sec_edgar___*`). This routes their EXECUTION through the governed toolbox,
+    # so the toolbox is the single unified, governed tool surface — not just a catalog.
+    # code_interpreter is EXCLUDED from the allow-list (preview toolbox CI 500s), so it
+    # keeps running as the Foundry-native hosted tool below, with no name collision.
+    # FoundryToolbox does not accept allowed_tools, so we set it post-construction (it is
+    # read at connect/load_tools time). We also add the mandatory Foundry-Features header.
+    tools_toolbox = FoundryToolbox(cred, token_scope=AI_SCOPE, load_tools=True)
+    tools_toolbox.allowed_tools = _toolbox_tool_allowlist()
+    try:
+        tools_toolbox._httpx_client.headers[TOOLBOX_FEATURES_HEADER[0]] = (
+            TOOLBOX_FEATURES_HEADER[1]
+        )
+    except Exception:  # noqa: BLE001 - defensive; platform may already inject it
+        logger.warning("could not set Foundry-Features header on tools-toolbox client")
 
-    # The FoundryToolbox is consumed ONLY as a skills provider (load_skill progressive
-    # disclosure over MCP). It is deliberately NOT placed in the agent's `tools` list:
-    # doing so surfaces it to the Foundry Responses gateway as a hosted MCP server, which
-    # suppresses the native code_interpreter/web_search hosted tools (the model then
-    # hallucinates file creation and never runs code_interpreter). as_skills_provider()
-    # still needs the toolbox CONNECTED for skill discovery, so the lifecycle owner
-    # (main() / tests) enters the toolbox as an async context manager before the agent
-    # runs -- exactly the alternative the SDK error message prescribes.
+    # Native code_interpreter builds the .xlsx/.pptx deliverables (the toolbox-MCP
+    # code_interpreter 500s in preview). web_search + SEC EDGAR execute THROUGH the
+    # toolbox (tools_toolbox). Placing tools_toolbox in `tools` makes the agent connect
+    # and manage its MCP session for the agent's lifetime; only web/sec are exposed
+    # (allow-list), so the native code_interpreter hosted tool is not shadowed.
     tools: list = [
+        tools_toolbox,
         client.get_code_interpreter_tool(),
-        client.get_web_search_tool(),
     ]
-    if sec_mcp is not None:
-        tools.append(sec_mcp)
 
     agent = Agent(
         client=client,
         instructions=_system_prompt(),
-        # Native code_interpreter builds the .xlsx/.pptx deliverables, native web_search
-        # grounds facts, and (optionally) the hosted SEC EDGAR remote-MCP tool provides
-        # filings. The toolbox is intentionally absent here (see the tools comment above):
-        # it is connected out-of-band by the lifecycle owner so its skills can be
-        # discovered without being exposed as a hosted MCP tool that suppresses native CI.
+        # tools_toolbox routes web_search + SEC EDGAR through the governed toolbox;
+        # native code_interpreter builds the deliverables. The skills toolbox is NOT in
+        # this list (see main()): it is connected out-of-band so its skills are discovered
+        # without exposing a second, redundant tool surface.
         tools=tools,
-        # Skills are consumed natively off the same toolbox over MCP.
+        # Skills are consumed off the skills toolbox over MCP.
         context_providers=[skills_provider],
         # The egress middleware runs OUTERMOST so it observes the fully-materialised
-        # response (with the CI container id) and can harvest + upload artifacts before
-        # client conversion. NO ToolApprovalMiddleware: it needs a session the host does
-        # not provide (see _disable_skill_tool_approval above).
+        # response (with the native CI container id) and can harvest + upload artifacts
+        # before client conversion. NO ToolApprovalMiddleware: it needs a session the host
+        # does not provide (see _disable_skill_tool_approval above).
         middleware=[
             ArtifactEgressMiddleware(
                 project_endpoint=endpoint,
@@ -401,23 +395,22 @@ def build_agent(
         # canonical hosted samples. Overridable via FSI_STORE for experimentation.
         default_options={"store": _env_bool("FSI_STORE", default=False)},
     )
-    return agent, toolbox, skills_provider
+    return agent, skills_toolbox, skills_provider
 
 
 async def main() -> None:
-    agent, toolbox, skills_provider = build_agent()
+    agent, skills_toolbox, skills_provider = build_agent()
     port = int(os.environ.get("PORT", "8088"))
     logger.info(
         "starting FSI hosted agent '%s' on :%d",
         os.environ.get("FSI_SCENARIO_TITLE", "?"),
         port,
     )
-    # Connect the toolbox MCP session for the whole server lifetime WITHOUT putting the
-    # toolbox in the agent's tools list. This satisfies as_skills_provider()'s "toolbox
-    # must be connected" requirement (so load_skill works) while keeping the toolbox off
-    # the Responses tool surface, so the native code_interpreter/web_search hosted tools
-    # are not suppressed.
-    async with toolbox:
+    # Connect the SKILLS toolbox MCP session for the whole server lifetime. This
+    # satisfies as_skills_provider()'s "toolbox must be connected" requirement (so
+    # load_skill works). The web_search/SEC EDGAR tools toolbox is connected separately
+    # by the agent (it is in the agent's tools list).
+    async with skills_toolbox:
         # Pre-fetch + cache every skill body now, while the freshly-connected session is
         # owned by THIS task. Without this, the first request-time load_skill runs in a
         # different task and its MCP resources/read fails ("Error: Function failed."),

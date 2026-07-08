@@ -87,9 +87,9 @@ flowchart LR
 
     subgraph Foundry["Azure AI Foundry Agent Service"]
         HostedAgents["3 hosted agents<br/>fsi-equity / fsi-ib-pitch / fsi-pe-lbo"]
-        Toolbox["Scenario toolboxes (MCP)<br/>governed skill catalogs"]
-        NativeTools["Native tools<br/>code_interpreter + web_search"]
-        SECTools["SEC EDGAR remote MCP tool<br/>(optional)"]
+        Toolbox["Scenario toolboxes (MCP)<br/>governed skills + web_search + SEC EDGAR"]
+        NativeCI["Native code_interpreter<br/>(builds .xlsx / .pptx)"]
+        SECServer["SEC EDGAR remote MCP server<br/>(self-hosted, optional)"]
         Models["Model deployments"]
     end
 
@@ -99,9 +99,9 @@ flowchart LR
     Portal -->|"POST /api/run (SSE)"| API
     API -->|"Responses background:true + poll"| HostedAgents
     HostedAgents --> Models
-    HostedAgents -->|"load_skill progressive disclosure"| Toolbox
-    HostedAgents -->|"filing-backed facts"| SECTools
-    HostedAgents -->|"build .xlsx/.pptx"| NativeTools
+    HostedAgents -->|"load_skill + web search + SEC filings (MCP)"| Toolbox
+    Toolbox -->|"governed MCP call"| SECServer
+    HostedAgents -->|"build .xlsx/.pptx"| NativeCI
     HostedAgents -->|"upload artifact blobs"| Storage
     API -->|"read blob privately<br/>/api/artifacts/{id}"| Storage
     Portal -->|"download file"| API
@@ -115,8 +115,9 @@ flowchart LR
    invokes the scenario's hosted agent over the Foundry **Responses** protocol in
    **background mode** (`stream:false, store:true, background:true`), then polls until
    complete — this avoids gateway disconnects on long Code Interpreter work.
-4. The hosted agent loads only the skills it needs from its toolbox over MCP, optionally
-   calls SEC EDGAR tools, then builds the deliverable with native `code_interpreter`.
+4. The hosted agent loads only the skills it needs from its toolbox over MCP, runs
+   `web_search` and (optionally) SEC EDGAR filing tools **through the same governed
+   toolbox**, then builds the deliverable with native `code_interpreter`.
 5. The agent's `ArtifactEgressMiddleware` uploads generated files to the private
    `artifacts` Blob container and appends a sentinel
    `<<<ARTIFACT name=<file> blob=<container>/<path>>>>` to the response text.
@@ -130,12 +131,13 @@ flowchart LR
 2. **Skills are governed Foundry skills**, registered centrally from a pinned Anthropic
    commit and bound to toolboxes — never pasted into static prompts. The runtime consumes
    them via `FoundryToolbox.as_skills_provider()` + `load_skill`.
-3. **Use native Foundry tools for execution.** `code_interpreter` and `web_search` come from
-   the project client (the preview toolbox Code Interpreter returns server-side 500s). They are
-   ALSO listed in each scenario toolbox as the unified, governed, portal-visible **catalog**
-   (tools + skills), but the runtime consumes the toolbox as a skills provider only
-   (`load_tools=False`) and executes those two tools natively — so cataloguing them does not
-   change runtime execution or reintroduce the preview defects.
+3. **Route tools through the toolbox; keep `code_interpreter` native.** `web_search` and the
+   SEC EDGAR MCP tool execute **through** each scenario toolbox — at runtime the agent opens
+   a `load_tools=True` toolbox connection with an `allowed_tools` allow-list, so the toolbox
+   is the single, unified, governed tool surface, not just a catalog. `code_interpreter` is
+   the one exception: the preview toolbox Code Interpreter returns server-side 500s, so it is
+   excluded from the allow-list and executed as the reliable Foundry-native hosted tool. It
+   is still listed in each toolbox catalog for a complete, portal-visible inventory.
 4. **SEC EDGAR is a self-hosted remote MCP tool**, not in-container code. It runs as its own
    Container App and is attached as a Foundry-native remote MCP tool; the gateway injects a
    shared-secret header, so the endpoint is unusable without the key.
@@ -178,6 +180,7 @@ flowchart LR
 
 - [Azure AI Foundry hosted agents](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry)
 - [Foundry Agent Service runtime components](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/runtime-components?view=foundry)
+- [Use a toolbox in Foundry Agent Service](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/toolbox?view=foundry)
 - [Foundry tools overview](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/overview?view=foundry)
 - [Anthropic financial-analysis skills](https://github.com/anthropics/financial-services/tree/main/plugins/vertical-plugins/financial-analysis/skills)
 - [`sec-edgar-mcp`](https://github.com/stefanoamorelli/sec-edgar-mcp) (upstream license: AGPL-3.0)
