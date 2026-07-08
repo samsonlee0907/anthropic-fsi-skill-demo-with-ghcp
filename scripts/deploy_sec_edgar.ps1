@@ -27,8 +27,33 @@ param(
 $ErrorActionPreference = 'Stop'
 $SourceDir = (Resolve-Path $SourceDir).Path
 
+# Build in ACR WITHOUT depending on log streaming. On Windows `az acr build` streams
+# server-side logs through colorama and crashes with a cosmetic
+# `UnicodeEncodeError: 'charmap' codec can't encode ...` (az.cmd launches `python.exe -I`
+# so PYTHONUTF8/console code page can't help). The build itself SUCCEEDS server-side, but
+# the crash makes the command exit non-zero BEFORE the image is pushed -- so a naive
+# `az acr build | Out-Null` followed by `containerapp create` races the image and fails
+# with `MANIFEST_UNKNOWN: manifest tagged by "latest" is not found`. Instead: capture the
+# queued run id (printed before any crash), ignore the streaming failure, and poll the run
+# status authoritatively. Mirrors Invoke-AcrBuild in deploy.ps1.
 Write-Host "Building $ImageTag in registry $RegistryName ..."
-az acr build --registry $RegistryName --image $ImageTag $SourceDir | Out-Null
+$buildOut = az acr build --registry $RegistryName --image $ImageTag $SourceDir 2>&1 | Out-String
+$runId = [regex]::Match($buildOut, 'Queued a build with ID:\s*(\S+)').Groups[1].Value
+if (-not $runId) {
+    Write-Host $buildOut
+    throw "az acr build ($ImageTag) failed before a run was queued."
+}
+Write-Host "  queued ACR run $runId; polling status ..."
+$status = ''
+for ($i = 0; $i -lt 120; $i++) {
+    Start-Sleep -Seconds 5
+    $status = az acr task show-run --registry $RegistryName --run-id $runId --query status -o tsv 2>$null
+    if ($status -in @('Succeeded', 'Failed', 'Canceled', 'Error', 'Timeout')) { break }
+}
+if ($status -ne 'Succeeded') {
+    throw "ACR build run $runId did not succeed (status: $status). Check: az acr task logs --registry $RegistryName --run-id $runId"
+}
+Write-Host "  ACR run $runId Succeeded."
 
 $image = "$RegistryName.azurecr.io/$ImageTag"
 
