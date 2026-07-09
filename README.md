@@ -100,7 +100,8 @@ flowchart LR
     Storage["Azure Storage<br/>private artifacts container"]
 
     Browser -->|"open portal"| Portal
-    Portal -->|"POST /api/run (SSE)"| API
+    Portal -->|"POST /api/run"| API
+    API -->|"SSE: live activity feed<br/>+ narrative + artifact buttons"| Portal
     API -->|"Responses background:true + poll"| HostedAgents
     HostedAgents --> Models
     HostedAgents -->|"load_skill + web search + SEC filings (MCP)"| Toolbox
@@ -115,6 +116,9 @@ flowchart LR
 
 1. The portal loads scenario metadata (`GET /api/scenarios`, `GET /api/toolboxes`).
 2. The user starts a scenario (`POST /api/run`, body `{ "scenario": "...", "message": "..." }`).
+   The response is a **Server-Sent Events** stream, so the portal renders a **live activity
+   feed** (lifecycle phases plus the real governed tool calls — `load_skill`, `web`,
+   `sec_edgar___*`) instead of a static spinner while the run is in flight.
 3. The API authenticates with `DefaultAzureCredential` (Container App managed identity) and
    invokes the scenario's hosted agent over the Foundry **Responses** protocol in
    **background mode** (`stream:false, store:true, background:true`), then polls until
@@ -125,8 +129,10 @@ flowchart LR
 5. The agent's `ArtifactEgressMiddleware` uploads generated files to the private
    `artifacts` Blob container and appends a sentinel
    `<<<ARTIFACT name=<file> blob=<container>/<path>>>>` to the response text.
-6. The API parses the sentinel, downloads the blob privately with managed identity, and
-   streams the narrative plus an artifact link (`GET /api/artifacts/{id}`) to the portal.
+6. The API parses the sentinel, downloads the blob privately with managed identity, strips
+   any dead `sandbox:/mnt/data/...` links the model may have narrated, and streams the
+   clean narrative (rendered as markdown) plus a real **download button** per artifact
+   (`GET /api/artifacts/{id}`) to the portal.
 
 ## Design principles (do not regress)
 
@@ -154,6 +160,22 @@ flowchart LR
    can repair it any time with
    `az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow`
    (or request a policy exemption for the resource group).
+
+## Troubleshooting
+
+The failures below are the ones actually hit while building and dogfooding this asset. Full
+detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8-known-gotchas-these-caused-real-hard-to-diagnose-failures).
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| Download buttons missing — only a `*_agent_summary.*` fallback file appears; agent logs `AuthorizationFailure` on blob upload | Storage `publicNetworkAccess` was flipped to `Disabled` — often by a subscription **Azure Policy** *after* deploy. The error wording is identical to a missing RBAC role, but the instance identities already hold `Storage Blob Data Contributor`; it's a **network** block, not identity. | `az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow --bypass AzureServices`. `deploy.ps1` re-asserts this at step 1 and step 7b. Durable fix: a policy **exemption** for the RG, or private endpoints for both the agent compute and the Container Apps env. |
+| A download link opens the portal root / a dead `sandbox:/mnt/data/...` link | The model narrated a sandbox link instead of relying on the real file. | The BFF strips these automatically (`orchestrator._strip_sandbox_links`) — use the artifact **button**. If *no* button appears at all, it's the storage-network issue above. |
+| `az acr build` exits non-zero with `UnicodeEncodeError: 'charmap'` on Windows | Cosmetic crash in the CLI's log streamer; the server-side build actually **succeeded**. | Ignore the exit code and verify with `az acr task list-runs --registry <acr> --top 1 -o table`. `deploy.ps1` handles this automatically. |
+| `azd deploy` fails with `AzureCLICredential: exit status 1` | Credential lookup flakes under back-to-back deploys. | Deploy one agent at a time and retry (`deploy.ps1` retries 3×). Ensure `azd config set auth.useAzCliAuth true`. |
+| A scenario 408-times out (~360s), or validation reports 2/3 | A heavy single prompt (deep SEC retrieval + full multi-sheet model) at the model layer, or a transient `500`/`429` on the poll GET. | Expected: the BFF retries the poll, runs a corrective artifact turn, and finally emits a **type-correct** fallback file. Re-run the single scenario. |
+| Provisioning (step 1) fails `InsufficientQuota` with no live resources present | A previously-deleted env left a **soft-deleted Foundry account** still holding model TPM. | `az cognitiveservices account list-deleted -o table`, then `az cognitiveservices account purge ...` (see runbook §10). |
+| SEC EDGAR tools never fire | SEC MCP not deployed / `SEC_EDGAR_MCP_URL` unset, or `SEC_EDGAR_USER_AGENT` (a real contact string) missing on the MCP app. | Deploy with `-SecEdgarUserAgent "Name (you@example.com)"`, confirm `SEC_EDGAR_MCP_URL` is set and bound into the toolboxes. SEC EDGAR is optional; web search still grounds the analysis. |
+| Redeployed an agent but behavior didn't change | The deployed copy in `agents/hosted/_azd/agent-src/` is stale. | Re-sync before deploying and confirm with `Get-FileHash` (see runbook §4). |
 
 ## Repository structure
 
