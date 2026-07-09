@@ -1,0 +1,13 @@
+{
+  "name": "fsi-portal-screenshots",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local screenshot capture for the FSI demo README (portal UI via Playwright).",
+  "type": "module",
+  "scripts": {
+    "capture": "node capture_portal.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.47.0"
+  }
+}

@@ -31,6 +31,41 @@ MCP tool, adds live market context with **web search**, and models it in
 **code interpreter**. The default one-click prompts target Microsoft (MSFT); edit the
 mandate to analyse any ticker.
 
+## What it looks like
+
+Everything below is produced by the **default one-click Microsoft (MSFT) prompts** — no
+synthetic data. The images are regenerated from a live deployment with
+[`scripts/capture_screenshots.ps1`](scripts/screenshots/README.md).
+
+### The portal
+
+![Scenario gallery: three FSI workflows, each mapped to one Foundry hosted agent and its skill toolbox](docs/images/portal-landing.png)
+
+*Scenario gallery — one hosted agent per FSI workflow, with each toolbox's governed
+skills and tools (Code Interpreter, Web Search, SEC EDGAR MCP) shown on the right.*
+
+![Completed Equity Research run showing the live activity feed, narrative with SEC filing URLs, and the workbook download button](docs/images/portal-run-equity-research.png)
+
+*A completed **Equity Research** run. The live activity feed shows the agent loading
+governed skills and calling toolbox-routed tools (`sec_edgar___get_company_info`,
+`sec_edgar___get_recent_filings`, `sec_edgar___get_key_metrics`, `web`) and the code
+interpreter; the narrative cites **real SEC filing URLs**; and the finished workbook is
+offered as a **download button** (`MSFT_valuation_package_*.xlsx`).*
+
+### Generated artifacts
+
+![Excel DCF workbook: MSFT base/bull/bear cases, WACC, and SEC-sourced market data](docs/images/artifact-equity-dcf.png)
+
+*Equity Research → `.xlsx`: a base/bull/bear DCF with WACC and SEC-sourced market data
+(share price, shares outstanding, cash, debt), authored in the code interpreter from the
+Anthropic `dcf-model` + `xlsx-author` skills.*
+
+![PowerPoint competitive-positioning slide: MSFT vs GOOGL, ORCL, CRM, ADBE, NOW on scale vs platform breadth](docs/images/artifact-ib-pitch-slide.png)
+
+*Investment Banking → `.pptx`: a competitive-positioning slide (scale vs. platform
+breadth) from the `competitive-analysis` + `pptx-author` skills. The IB run also emits a
+supporting `.pptx` deck and `.xlsx` model as download buttons.*
+
 ## Quickstart
 
 ### Prerequisites
@@ -209,9 +244,9 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 
 ## Official references
 
-- [Microsoft Foundry hosted agents](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry)
-- [Foundry Agent Service runtime components](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/runtime-components?view=foundry)
-- [Use a toolbox in Foundry Agent Service](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/toolbox?view=foundry)
-- [Foundry tools overview](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/overview?view=foundry)
+- [Microsoft Foundry hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents)
+- [Foundry Agent Service runtime components](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/runtime-components)
+- [Use a toolbox in Foundry Agent Service](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox)
+- [Foundry tools overview](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/tool-catalog)
 - [Anthropic financial-analysis skills](https://github.com/anthropics/financial-services/tree/main/plugins/vertical-plugins/financial-analysis/skills)
 - [`sec-edgar-mcp`](https://github.com/stefanoamorelli/sec-edgar-mcp) (upstream license: AGPL-3.0)

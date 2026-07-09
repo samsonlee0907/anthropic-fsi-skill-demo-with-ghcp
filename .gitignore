@@ -32,6 +32,10 @@ Thumbs.db
 fsi_artifacts/
 *.tmp
 
+# Local screenshot capture scratch (raw downloaded Office files + local manifest)
+docs/images/_artifacts/
+docs/images/manifest.json
+
 # Generated deployment outputs (may contain connection strings)
 infra/outputs.json
 
