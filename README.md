@@ -108,6 +108,21 @@ environment → deploy the three hosted agents → grant agent RBAC → build & 
 and portal → validate all three scenarios. Use `-EnvName <other>` to stand up an isolated
 second deployment; every resource is namespaced by it.
 
+Useful switches for constrained or governed subscriptions:
+
+- `-ModelCapacity <thousands-of-TPM>` (default `150`) — lower it if your `gpt-5.4`
+  GlobalStandard quota is tight. That quota is **subscription-global** (every region shows the
+  same used/limit), so region-hopping won't free it — purge an unused Foundry account instead.
+- `-PrincipalId <objectId>` — pass your Entra object ID explicitly if `az ad signed-in-user show`
+  can't resolve it (e.g. under a Conditional Access / CAE challenge). `deploy.ps1` otherwise
+  resolves it from Graph or the ARM token's `oid` claim, and **stops fast** if all paths fail
+  rather than skipping developer RBAC and failing later at skill registration.
+- If a subscription/management-group **Azure Policy** keeps flipping storage
+  `publicNetworkAccess` back to `Disabled`, `deploy.ps1` self-heals via
+  `scripts/ensure_storage_public.ps1` (creates a resource-group-scoped Waiver exemption). See the
+  runbook's *Storage public network access & policy exemptions* section if you lack policy
+  permissions.
+
 Resume after a failure with the `-Skip*` switches (e.g. `-SkipInfra -SkipSkills`).
 
 See [`docs/runbook.md`](docs/runbook.md) for step-by-step internals, RBAC, gotchas, and
@@ -189,12 +204,13 @@ flowchart LR
 5. **Keep artifact storage network-reachable.** Blob egress uses AAD/RBAC over the public
    endpoint (`allowSharedKeyAccess=false`, no anonymous access). Keep
    `publicNetworkAccess=Enabled` unless you add private endpoints for both the agent compute
-   and the Container Apps env — RBAC alone is not sufficient. A subscription **Azure Policy**
-   can flip it back to `Disabled` *after* deploy, breaking artifact download with an
-   `AuthorizationFailure` that looks like a missing role; `deploy.ps1` re-asserts it, and you
-   can repair it any time with
-   `az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow`
-   (or request a policy exemption for the resource group).
+   and the Container Apps env — RBAC alone is not sufficient. A subscription/management-group
+   **Azure Policy** can flip it back to `Disabled` at create time and again *after* deploy,
+   breaking artifact download with an `AuthorizationFailure` that looks like a missing role.
+   `deploy.ps1` self-heals via `scripts/ensure_storage_public.ps1`, which re-asserts `Enabled`,
+   **verifies it actually stuck** (a Policy `modify` effect makes a plain
+   `az storage account update` silently no-op), and creates a resource-group-scoped Waiver
+   policy exemption if a policy is reverting it. See the runbook if you lack policy permissions.
 
 ## Troubleshooting
 
@@ -203,7 +219,10 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Download buttons missing — only a `*_agent_summary.*` fallback file appears; agent logs `AuthorizationFailure` on blob upload | Storage `publicNetworkAccess` was flipped to `Disabled` — often by a subscription **Azure Policy** *after* deploy. The error wording is identical to a missing RBAC role, but the instance identities already hold `Storage Blob Data Contributor`; it's a **network** block, not identity. | `az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow --bypass AzureServices`. `deploy.ps1` re-asserts this at step 1 and step 7b. Durable fix: a policy **exemption** for the RG, or private endpoints for both the agent compute and the Container Apps env. |
+| Download buttons missing — only a `*_agent_summary.*` fallback file appears; agent logs `AuthorizationFailure` on blob upload | Storage `publicNetworkAccess` was flipped to `Disabled` — often by a subscription/management-group **Azure Policy** *after* deploy. The error wording is identical to a missing RBAC role, but the instance identities already hold `Storage Blob Data Contributor`; it's a **network** block, not identity. | `deploy.ps1` self-heals via `scripts/ensure_storage_public.ps1` at step 1 and step 7b (re-asserts Enabled, verifies it stuck, and creates a Waiver exemption if a `modify` policy is reverting it — a plain `az storage account update` silently no-ops under such a policy). If you lack `policyExemptions/write`, ask a Policy owner for an RG exemption, or use private endpoints. |
+| `deploy.ps1` stops at infra with "could not resolve principal id" | `az ad signed-in-user show` returned nothing — usually a Conditional Access / CAE token challenge. | Re-run with `-PrincipalId <your-object-id>` (`az ad signed-in-user show --query id -o tsv`, or copy the `oid` from the error). |
+| Skill registration fails with an `agents/read` permission error | Developer RBAC was skipped because the principal id resolved blank on an older run. | Fixed by the fail-fast principal resolver above; if you already hit it, assign **Azure AI User** + **Cognitive Services User** to your object ID on the Foundry account and resume with `-SkipInfra`. |
+| Infra fails with `ManagedEnvironmentCapacityHeavyUsageError` | The region has model quota but is out of **Container Apps** capacity (independent of model quota). | Deploy in another region (East US 2 is the tested default). |
 | A download link opens the portal root / a dead `sandbox:/mnt/data/...` link | The model narrated a sandbox link instead of relying on the real file. | The BFF strips these automatically (`orchestrator._strip_sandbox_links`) — use the artifact **button**. If *no* button appears at all, it's the storage-network issue above. |
 | `az acr build` exits non-zero with `UnicodeEncodeError: 'charmap'` on Windows | Cosmetic crash in the CLI's log streamer; the server-side build actually **succeeded**. | Ignore the exit code and verify with `az acr task list-runs --registry <acr> --top 1 -o table`. `deploy.ps1` handles this automatically. |
 | `azd deploy` fails with `AzureCLICredential: exit status 1` | Credential lookup flakes under back-to-back deploys. | Deploy one agent at a time and retry (`deploy.ps1` retries 3×). Ensure `azd config set auth.useAzCliAuth true`. |

@@ -35,15 +35,29 @@ mandate to target any public ticker.
 - Azure subscription with Foundry model quota in the target region for the deployments in the
   `modelDeployments` param (default: a single `gpt-5.4` GlobalStandard deployment at 150K TPM).
   Add models or change capacity/region via that param to fit your quota; keep
-  `agentModelDeploymentName` in the list.
+  `agentModelDeploymentName` in the list. For a quick capacity override without editing bicep,
+  pass `deploy.ps1 -ModelCapacity <thousands-of-TPM>` (default `150`). Note: `gpt-5.4`
+  GlobalStandard quota is **subscription-global** — every region reports the same used/limit — so
+  freeing it means deleting *and purging* an unused Foundry (AIServices) account, not just
+  switching region.
+- Region must satisfy **both** model quota **and** Container Apps capacity; these are independent.
+  East US 2 is the tested default. Some regions (observed: Sweden Central) can have model quota but
+  be out of Container Apps managed-environment capacity (`ManagedEnvironmentCapacityHeavyUsageError`)
+  — switch regions if you hit that at the infra step.
 - `az`, `azd` (with the Foundry agents extension — install with
   `azd extension install azure.ai.agents`, verify with `azd ai agent --help`),
   `gh` (authenticated), Python 3.11+.
 - `az login`; `pip install -r agents/scripts/requirements.txt` (pinned deps for the
   provisioning scripts). Multi-subscription users: `az account set --subscription <id>`
   or pass `-SubscriptionId <id>` to `deploy.ps1`.
-- `deploy.ps1` auto-derives your object ID via `az ad signed-in-user show`; pass `-PrincipalId`
-  only to override (or when running the raw `az deployment` path with `developerPrincipalId`).
+- `deploy.ps1` resolves your object ID through a fallback chain: `-PrincipalId` if you pass it,
+  then `az ad signed-in-user show`, then the `oid` claim decoded from the ARM access token.
+  The last step covers **Conditional Access / CAE** tenants where a token challenge
+  (`TokenCreatedWithOutdatedPolicies`) makes the Microsoft Graph call return empty — that used to
+  pass a blank `developerPrincipalId`, silently skip the developer RBAC assignment, and fail skill
+  registration with an `agents/read` permission error. If all three fail the script now **stops
+  with a clear message** telling you to pass `-PrincipalId <objectId>` instead of deploying half
+  a stack.
 - The infra step prints benign warnings you can ignore: a Bicep upgrade notice and
   `BCP081` "resource type does not have types available" for the preview
   `Microsoft.CognitiveServices` API version — these do not block deployment.
@@ -192,14 +206,16 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   fails with `AuthorizationFailure "This request is not authorized..."` — the SAME message as
   missing RBAC, so it is easy to misdiagnose as an identity problem (all three agent instance
   identities already hold `Storage Blob Data Contributor`). `infra/modules/storage.bicep` keeps
-  `publicNetworkAccess=Enabled`, but a subscription **Azure Policy** with a `modify`/remediation
-  effect can flip it back to `Disabled` *after* deploy — often minutes to hours later — silently
-  breaking every artifact download. `deploy.ps1` re-asserts `Enabled` at step 1 and again at
-  **step 7b** (after agents, before validation); if it regresses again later, repair it with:
-  `az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow --bypass AzureServices`.
-  For a durable fix, request a **policy exemption** for the resource group, or add private
-  endpoints for both the agent compute and the Container Apps environment. RBAC alone is not
-  sufficient.
+  `publicNetworkAccess=Enabled`, but a subscription/management-group **Azure Policy** with a
+  `modify` effect can flip it back to `Disabled` — at create time and again *after* deploy,
+  minutes to hours later — silently breaking every artifact download. **A `modify` policy is the
+  nasty case:** `az storage account update --public-network-access Enabled` returns success but
+  the value stays `Disabled` (the policy re-applies on every write), so a guard that only checks
+  the exit code silently "passes". `deploy.ps1` calls `scripts/ensure_storage_public.ps1` at
+  step 1 and again at **step 7b**; that helper re-reads the actual value and, if a policy is
+  reverting it, **self-heals** by creating a resource-group-scoped **Waiver policy exemption** for
+  the offending assignment, then re-applies and re-verifies. See *Storage public network access &
+  policy exemptions* at the end of this section if you can't create exemptions.
 - **Dead `sandbox:/mnt/data` links are stripped by the BFF.** The model often narrates
   `[Download the workbook](sandbox:/mnt/data/...)` links that only resolve inside the code
   interpreter sandbox and dead-end at the portal origin. The real download is the artifact
@@ -250,6 +266,51 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   transient 5xx/429 and network errors in place (5 attempts, linear backoff) instead of failing the
   scenario. A single un-retried `500` on the poll — not a real run failure — is what previously
   caused sporadic 1/3 or 2/3 validation results.
+
+### Storage public network access & policy exemptions
+
+If your subscription enforces a `modify`/`deny` policy on storage `publicNetworkAccess`, you need
+either a policy exemption or private endpoints. `scripts/ensure_storage_public.ps1` automates the
+exemption path (it needs `Microsoft.Authorization/policyExemptions/write` — Owner or Resource
+Policy Contributor on the resource group). To do it by hand, discover the governing assignment and
+create a Waiver:
+
+```powershell
+# 1. Find the assignment(s) effective on the storage account
+az policy assignment list --disable-scope-strict-match --scope <storage-account-id> -o table
+
+# 2. Create an RG-scoped Waiver exemption (for an initiative, add the definition ref id)
+az policy exemption create --name fsi-storage-public-network-waiver `
+  --resource-group <rg> --policy-assignment <assignment-id> `
+  --exemption-category Waiver `
+  --policy-definition-reference-ids <StoragePublicNetworkModify-ref-id>
+
+# 3. Re-apply and confirm it holds (should print Enabled)
+az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow --bypass AzureServices
+az storage account show -n <acct> -g <rg> --query publicNetworkAccess -o tsv
+```
+
+If you cannot create exemptions (no policy permissions), ask a Policy owner for an exemption or
+exclusion for the resource group, or adopt the private-endpoint architecture below. RBAC alone is
+not sufficient — the request never reaches the RBAC check when the network path is closed.
+
+### Private networking (enterprise alternative)
+
+To satisfy a "no public storage" policy natively instead of exempting it, keep
+`publicNetworkAccess=Disabled` and give **both** consumers a private path to Blob Storage:
+
+- a **Blob private endpoint** into your VNet plus the `privatelink.blob.core.windows.net`
+  private DNS zone linked to that VNet;
+- a **VNet-integrated Container Apps environment** for the BFF (the `infrastructureSubnetId` must
+  be set at environment *create* time — it can't be toggled on an existing environment, so this is
+  a create-time redesign of `infra/modules/*`);
+- **Foundry account network injection** so the managed hosted-agent compute resolves storage over
+  the private endpoint (a separate Foundry networking-enabled setup — the default hosted-agent
+  compute is Microsoft-managed and not joined to your VNet).
+
+This is the correct long-term posture for regulated environments but requires the create-time
+infra changes above; the shipped template uses the public-endpoint + RBAC path, which is why the
+storage guard exists.
 
 ## 9. Extending to more live data sources
 

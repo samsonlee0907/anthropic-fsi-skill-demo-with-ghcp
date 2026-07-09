@@ -32,6 +32,7 @@ param(
     [string]$SubscriptionId = '',
     [string]$PrincipalId = '',
     [string]$ModelDeploymentName = 'gpt-5.4',
+    [int]$ModelCapacity = 150,
     [string]$SecEdgarUserAgent = '',
     [switch]$SkipInfra,
     [switch]$SkipSkills,
@@ -62,6 +63,32 @@ function Require-Tool([string]$name) {
 # terminating errors, so $ErrorActionPreference='Stop' does NOT catch them).
 function Assert-LastExit([string]$what) {
     if ($LASTEXITCODE -ne 0) { throw "$what failed (exit $LASTEXITCODE)." }
+}
+
+# Resolve the caller's Entra object ID for the developer RBAC grant, robust to a
+# Conditional Access / Continuous Access Evaluation (CAE) challenge. A CAE challenge
+# (`TokenCreatedWithOutdatedPolicies`) makes the Microsoft Graph call
+# `az ad signed-in-user show` return EMPTY while the ARM access token -- which already
+# carries the caller's `oid` claim -- still works. If we passed an empty principal id
+# the bicep would silently SKIP the developer RBAC (foundryRbacDev is gated on
+# `!empty(developerPrincipalId)`), and skill registration would then fail with an
+# `agents/read` permission error. So we try Graph first, then fall back to decoding the
+# token's `oid` claim, and finally fail fast asking for -PrincipalId.
+function Resolve-PrincipalId {
+    param([string]$Explicit = '')
+    if ($Explicit) { return $Explicit }
+    $viaGraph = az ad signed-in-user show --query id -o tsv 2>$null
+    if ($viaGraph) { return $viaGraph.Trim() }
+    try {
+        $tok = az account get-access-token --resource 'https://management.core.windows.net/' --query accessToken -o tsv 2>$null
+        if ($tok) {
+            $payload = $tok.Split('.')[1].Replace('-', '+').Replace('_', '/')
+            switch ($payload.Length % 4) { 2 { $payload += '==' } 3 { $payload += '=' } }
+            $claims = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($payload)) | ConvertFrom-Json
+            if ($claims.oid) { return [string]$claims.oid }
+        }
+    } catch { }
+    return ''
 }
 
 # Build an image in ACR without depending on log streaming.
@@ -122,7 +149,19 @@ if (-not $SkipAgents) {
 }
 
 if ($SubscriptionId) { az account set --subscription $SubscriptionId | Out-Null }
-if (-not $PrincipalId) { $PrincipalId = az ad signed-in-user show --query id -o tsv }
+if (-not $SkipInfra) {
+    $PrincipalId = Resolve-PrincipalId -Explicit $PrincipalId
+    if (-not $PrincipalId) {
+        throw @"
+Could not resolve your Entra object ID for the developer RBAC grant. This usually
+means a Conditional Access / CAE challenge blocked 'az ad signed-in-user show' and the
+access-token 'oid' claim was unavailable. Re-run and pass it explicitly:
+  ./deploy.ps1 -EnvName $EnvName -Location $Location -PrincipalId <your-object-id>
+Find your object id with:  az ad signed-in-user show --query id -o tsv
+(or Azure portal > Microsoft Entra ID > Users > your user > Object ID).
+"@
+    }
+}
 az config set auth.useAzCliAuth true 2>$null | Out-Null
 
 # ---------------------------------------------------------------------------
@@ -137,6 +176,7 @@ if (-not $SkipInfra) {
         --parameters environmentName=$EnvName location=$Location `
                      developerPrincipalId=$PrincipalId `
                      agentModelDeploymentName=$ModelDeploymentName `
+                     modelCapacity=$ModelCapacity `
         -o json
     Assert-LastExit 'az deployment sub create'
     $dep = $depJson | ConvertFrom-Json
@@ -166,14 +206,10 @@ Write-Host "  rg=$rg acr=$acrName api=$apiUrl"
 # Disabled at ARM-create time even though the bicep sets Enabled. With no private
 # endpoints for the (VNet-less) hosted-agent compute + Container Apps, that breaks
 # artifact egress with an AuthorizationFailure that looks exactly like a missing RBAC
-# role. Re-assert Enabled here so the egress path stays reachable over AAD-gated public.
+# role. The helper re-asserts Enabled AND verifies it stuck (self-healing around a
+# modify policy via a scoped Waiver exemption); it is a no-op in a clean subscription.
 if (-not $SkipInfra) {
-    $pna = az storage account show -n $storageAccount -g $rg --query publicNetworkAccess -o tsv 2>$null
-    if ($pna -and $pna -ne 'Enabled') {
-        Write-Host "  [guard] storage publicNetworkAccess=$pna; re-enabling ..." -ForegroundColor Yellow
-        az storage account update -n $storageAccount -g $rg --public-network-access Enabled 1>$null 2>$null
-        Assert-LastExit 'az storage account update (publicNetworkAccess)'
-    }
+    & (Join-Path $repo 'scripts\ensure_storage_public.ps1') -ResourceGroup $rg -StorageAccountName $storageAccount
 }
 
 # ---------------------------------------------------------------------------
@@ -270,13 +306,13 @@ if (-not $SkipAgents) {
 # bicep sets it Enabled. When that happens the hosted-agent compute and the VNet-less
 # Container Apps BFF can no longer reach Blob Storage, and artifact upload fails with
 # AuthorizationFailure -- the SAME wording as a missing RBAC role, so it is easy to
-# misdiagnose as an identity problem. Re-assert Enabled here so egress keeps working.
-# (Data stays protected by Entra ID RBAC only; shared-key + anonymous access remain off.)
+# misdiagnose as an identity problem. The helper re-asserts Enabled and VERIFIES it
+# stuck: a Policy 'modify' effect silently no-ops `az storage account update` (the write
+# succeeds but the value stays Disabled), so it self-heals with a scoped Waiver
+# exemption. (Data stays protected by Entra ID RBAC only; shared-key + anonymous off.)
 # ---------------------------------------------------------------------------
 Write-Host "== 7b. Ensuring storage public network access ==" -ForegroundColor Cyan
-az storage account update -n $storageAccount -g $rg `
-    --public-network-access Enabled --default-action Allow --bypass AzureServices | Out-Null
-Assert-LastExit 'az storage account update (public network access)'
+& (Join-Path $repo 'scripts\ensure_storage_public.ps1') -ResourceGroup $rg -StorageAccountName $storageAccount
 
 # ---------------------------------------------------------------------------
 # 8. Build + deploy API and portal images

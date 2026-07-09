@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "461447162770492129"
+      "templateHash": "3935817586326439515"
     },
     "description": "FSI Multi-Agent Demo — subscription-scoped deployment: resource group + Foundry + supporting services + Container Apps."
   },
@@ -40,6 +40,13 @@
         "description": "Model deployment name the hosted agents run on. MUST match one of the names in modelDeployments (below), or the agents will call a deployment that does not exist."
       }
     },
+    "modelCapacity": {
+      "type": "int",
+      "defaultValue": 150,
+      "metadata": {
+        "description": "Capacity (thousands of tokens/min) for the default gpt-5.4 deployment. Lower it if you are quota-constrained -- gpt-5.4 GlobalStandard quota is subscription-GLOBAL (shared across every region), so switching region does NOT free quota. Ignored when modelDeployments is overridden directly."
+      }
+    },
     "modelDeployments": {
       "type": "array",
       "defaultValue": [
@@ -48,7 +55,7 @@
           "model": "gpt-5.4",
           "version": "2026-03-05",
           "sku": "GlobalStandard",
-          "capacity": 150
+          "capacity": "[parameters('modelCapacity')]"
         }
       ],
       "metadata": {
@@ -296,7 +303,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "14021841399466325700"
+              "templateHash": "5842820076003508184"
             },
             "description": "Microsoft Foundry account (AI Services) + project + serialized model deployments for the FSI multi-agent demo."
           },
@@ -574,9 +581,9 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "6171594177924540117"
+              "templateHash": "4057747674955891141"
             },
-            "description": "Storage account with blob containers for generated artifacts and synthetic datasets."
+            "description": "Storage account with blob containers for generated artifacts."
           },
           "parameters": {
             "location": {
