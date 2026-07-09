@@ -3,7 +3,7 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'FSI Multi-Agent Studio',
-  description: 'A financial-services multi-agent demo powered by Azure AI Foundry Agent Service.'
+  description: 'A financial-services multi-agent demo powered by Microsoft Foundry Agent Service.'
 };
 
 export const viewport: Viewport = {

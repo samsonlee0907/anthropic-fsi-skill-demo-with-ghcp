@@ -1,7 +1,7 @@
-# Copilot instructions - FSI Multi-Agent Demo on Azure AI Foundry
+# Copilot instructions - FSI Multi-Agent Demo on Microsoft Foundry
 
 This repo is a reusable pattern for building **scenario-based Financial-Services (FSI) agents** on
-**Azure AI Foundry hosted agents**, adapting Anthropic's
+**Microsoft Foundry hosted agents**, adapting Anthropic's
 [`financial-analysis` skills](https://github.com/anthropics/financial-services/tree/main/plugins/vertical-plugins/financial-analysis/skills)
 into Foundry skills + toolboxes, fronted by a FastAPI BFF and a Next.js portal on Azure Container Apps.
 
@@ -164,7 +164,7 @@ azd deploy fsi-pe-lbo -e <env>
 
 ## Official references
 
-- Azure AI Foundry hosted agents: https://learn.microsoft.com/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry
+- Microsoft Foundry hosted agents: https://learn.microsoft.com/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry
 - Foundry Agent Service runtime components: https://learn.microsoft.com/azure/ai-foundry/agents/concepts/runtime-components?view=foundry
 - Foundry tools overview: https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/overview?view=foundry
 - Anthropic financial-analysis skills: https://github.com/anthropics/financial-services/tree/main/plugins/vertical-plugins/financial-analysis/skills

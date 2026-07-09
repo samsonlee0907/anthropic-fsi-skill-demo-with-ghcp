@@ -1,4 +1,4 @@
-metadata description = 'Azure AI Foundry account (AI Services) + project + serialized model deployments for the FSI multi-agent demo.'
+metadata description = 'Microsoft Foundry account (AI Services) + project + serialized model deployments for the FSI multi-agent demo.'
 
 param location string
 param tags object

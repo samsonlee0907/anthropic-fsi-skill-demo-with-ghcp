@@ -298,7 +298,7 @@
               "version": "0.43.8.12551",
               "templateHash": "14021841399466325700"
             },
-            "description": "Azure AI Foundry account (AI Services) + project + serialized model deployments for the FSI multi-agent demo."
+            "description": "Microsoft Foundry account (AI Services) + project + serialized model deployments for the FSI multi-agent demo."
           },
           "parameters": {
             "location": {

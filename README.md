@@ -1,8 +1,8 @@
-# FSI Multi-Agent Demo on Azure AI Foundry
+# FSI Multi-Agent Demo on Microsoft Foundry
 
 A **reusable, deployable asset** that turns Anthropic's
 [`financial-analysis`](https://github.com/anthropics/financial-services/tree/main/plugins/vertical-plugins/financial-analysis/skills)
-skills into a stack of **scenario-based Azure AI Foundry hosted agents** with governed
+skills into a stack of **scenario-based Microsoft Foundry hosted agents** with governed
 **skills + tools in toolboxes**, fronted by a FastAPI BFF and a Next.js portal on Azure
 Container Apps.
 
@@ -89,7 +89,7 @@ flowchart LR
         API["API (FastAPI BFF, SSE)"]
     end
 
-    subgraph Foundry["Azure AI Foundry Agent Service"]
+    subgraph Foundry["Microsoft Foundry Agent Service"]
         HostedAgents["3 hosted agents<br/>fsi-equity / fsi-ib-pitch / fsi-pe-lbo"]
         Toolbox["Scenario toolboxes (MCP)<br/>governed skills + web_search + SEC EDGAR"]
         NativeCI["Native code_interpreter<br/>(builds .xlsx / .pptx)"]
@@ -209,7 +209,7 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 
 ## Official references
 
-- [Azure AI Foundry hosted agents](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry)
+- [Microsoft Foundry hosted agents](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/hosted-agents?view=foundry)
 - [Foundry Agent Service runtime components](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/runtime-components?view=foundry)
 - [Use a toolbox in Foundry Agent Service](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/toolbox?view=foundry)
 - [Foundry tools overview](https://learn.microsoft.com/azure/ai-foundry/agents/how-to/tools/overview?view=foundry)

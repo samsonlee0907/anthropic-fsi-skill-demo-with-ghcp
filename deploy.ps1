@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    One-command deployment of the FSI multi-agent stack to Azure AI Foundry.
+    One-command deployment of the FSI multi-agent stack to Microsoft Foundry.
 
 .DESCRIPTION
     Runs the full ordered flow, idempotently, so anyone can reproduce the stack in

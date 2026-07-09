@@ -343,7 +343,7 @@ export function Studio() {
             </span>
             <span>
               <strong>FSI Multi-Agent Studio</strong>
-              <small>Powered by Azure AI Foundry Agent Service</small>
+              <small>Powered by Microsoft Foundry Agent Service</small>
             </span>
           </div>
           <div className="healthCluster" aria-label="Backend status">
@@ -354,7 +354,7 @@ export function Studio() {
 
         <section className="heroContent" aria-labelledby="studio-title">
           <div>
-            <p className="heroLabel">Azure AI Foundry demo portal</p>
+            <p className="heroLabel">Microsoft Foundry demo portal</p>
             <h1 id="studio-title">Run scenario-based financial agents backed by a governed skill library.</h1>
             <p className="heroCopy">
               Select an FSI workflow, tailor the mandate, and watch a dedicated scenario agent load
