@@ -39,7 +39,6 @@ from azure.storage.blob import BlobServiceClient
 from .config import (
     AGENT_NAMES,
     ARTIFACTS_CONTAINER,
-    DATA_CONTEXT,
     DISCLAIMER,
     SCENARIOS,
     STORAGE_BLOB_ENDPOINT,
@@ -56,6 +55,22 @@ _ARTIFACT_DIR = Path(tempfile.gettempdir()) / "fsi_artifacts"
 _ARTIFACT_DIR.mkdir(exist_ok=True)
 
 _SENTINEL_RE = re.compile(r"^<<<ARTIFACT name=(?P<name>[^>]+?) blob=(?P<blob>[^>]*)>>>\s*$", re.M)
+
+# The model often narrates dead "[label](sandbox:/mnt/data/...)" download links that only
+# resolve inside the code_interpreter sandbox. The real download is the artifact button the
+# BFF renders from the blob sentinel, so strip these links so the portal never shows a link
+# that dead-ends at the portal origin.
+_SANDBOX_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\(\s*sandbox:[^)]*\)")
+_SANDBOX_BARE_RE = re.compile(r"`?sandbox:/[^\s`)\]]+`?")
+
+
+def _strip_sandbox_links(text: str) -> str:
+    """Neutralise sandbox:/mnt/data references so no dead links reach the portal."""
+    # "[Download the workbook](sandbox:/mnt/data/x.xlsx)" -> "Download the workbook"
+    text = _SANDBOX_MD_LINK_RE.sub(r"\1", text)
+    # Any remaining bare "sandbox:/mnt/data/x.xlsx" mention -> removed.
+    text = _SANDBOX_BARE_RE.sub("", text)
+    return text
 
 _MEDIA = {
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -94,7 +109,7 @@ def _sse(event: dict) -> str:
 _RUN_PHASES = (
     (0, "default", "Request accepted — the agent is starting up"),
     (6, "function_call", "Loading governed skills from the scenario toolbox"),
-    (24, "default", "Reasoning over the scenario inputs and synthetic data"),
+    (24, "default", "Reasoning over the company's filings and market data"),
     (48, "code_interpreter_call", "Running the financial model in the code interpreter"),
     (100, "code_interpreter_call", "Composing the Office artifact (workbook / deck)"),
     (160, "default", "Finalizing the narrative and packaging the artifact"),
@@ -500,7 +515,8 @@ def _harvest_from_text_sync(text: str) -> tuple[str, list[dict]]:
             artifacts.append(_register_artifact(name, data))
         except Exception as e:  # noqa: BLE001
             artifacts.append({"id": None, "filename": name, "error": str(e)[:200]})
-    clean = _SENTINEL_RE.sub("", text).strip()
+    clean = _SENTINEL_RE.sub("", text)
+    clean = _strip_sandbox_links(clean).strip()
     return clean, artifacts
 
 
@@ -523,13 +539,20 @@ def _build_input(scenario_key: str, message: str) -> str:
     return (
         f"{DISCLAIMER}\n\n"
         f"USER REQUEST:\n{message}\n\n"
-        f"SYNTHETIC DATASET (authoritative source for NovaGrid Technologies + peers; "
-        f"code_interpreter has no internet, so use this data):\n{DATA_CONTEXT}\n\n"
-        "SEC EDGAR guidance: if the user provides a real public ticker, keep filing "
-        "retrieval compact. Use SEC company info and recent filing metadata first; "
-        "request only a small set of named XBRL metrics when needed. Do not fetch full "
-        "filing sections, full filing content, or broad financial statements unless "
-        "the user explicitly asks for them, because those long retrievals can time out.\n\n"
+        "DATA SOURCING (no dataset is bundled — gather the real numbers yourself):\n"
+        "- The subject is a REAL public company. Use the SEC EDGAR toolbox tools "
+        "(sec_edgar___get_company_info, sec_edgar___get_recent_filings, "
+        "sec_edgar___get_key_metrics) to resolve the company/CIK, pull the most recent "
+        "10-K / 10-Q / 8-K filing metadata, and read selected XBRL metrics (revenue, "
+        "operating income, net income, total debt, cash, shares outstanding). Cite the "
+        "SEC filing URL, form type, and filing date for every figure you use. Keep "
+        "retrieval compact — request only the named metrics you need; do NOT fetch full "
+        "filing sections or full financial statements unless the user explicitly asks, "
+        "because those long retrievals can time out.\n"
+        "- Use the web tool for market context the filings don't cover (current share "
+        "price, market cap, peer set, sector growth) and cite the source.\n"
+        "- If a specific figure cannot be sourced, state the assumption explicitly in the "
+        "model instead of inventing a precise value.\n\n"
         "Now do the work: (1) load the relevant skill(s); (2) you MUST call the "
         "code_interpreter tool to build the real workbook/deck file(s) with openpyxl / "
         "python-pptx and save them under /mnt/data — do NOT reproduce the model or slides "
@@ -537,8 +560,8 @@ def _build_input(scenario_key: str, message: str) -> str:
         "skill says to use Bash or a local shell, adapt that step to code_interpreter "
         "Python because no Bash tool is available in this hosted runtime. Do not claim a "
         "sandbox:/mnt/data download link unless code_interpreter actually ran and saved "
-        "the file. (3) Then give a "
-        "short summary with the headline figures only."
+        "the file. (3) Then give a short summary with the headline figures only, citing "
+        "the SEC filing URLs you used."
     )
 
 

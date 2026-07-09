@@ -265,6 +265,20 @@ if (-not $SkipAgents) {
 }
 
 # ---------------------------------------------------------------------------
+# 7b. Ensure storage stays network-reachable (runs on every invocation).
+# A subscription Azure Policy can flip publicNetworkAccess back to Disabled AFTER the
+# bicep sets it Enabled. When that happens the hosted-agent compute and the VNet-less
+# Container Apps BFF can no longer reach Blob Storage, and artifact upload fails with
+# AuthorizationFailure -- the SAME wording as a missing RBAC role, so it is easy to
+# misdiagnose as an identity problem. Re-assert Enabled here so egress keeps working.
+# (Data stays protected by Entra ID RBAC only; shared-key + anonymous access remain off.)
+# ---------------------------------------------------------------------------
+Write-Host "== 7b. Ensuring storage public network access ==" -ForegroundColor Cyan
+az storage account update -n $storageAccount -g $rg `
+    --public-network-access Enabled --default-action Allow --bypass AzureServices | Out-Null
+Assert-LastExit 'az storage account update (public network access)'
+
+# ---------------------------------------------------------------------------
 # 8. Build + deploy API and portal images
 # ---------------------------------------------------------------------------
 if (-not $SkipApps) {

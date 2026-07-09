@@ -9,7 +9,9 @@ Use this file to help a user provision and deploy the whole asset end-to-end and
 that is documented in `docs/runbook.md`. Prefer official Microsoft Foundry and Azure documentation and
 the vendor repos linked below over guesswork.
 
-All bundled data is synthetic and for demo purposes only.
+All output is AI-generated from public SEC filings and web sources for demo purposes only
+(not investment advice). Every scenario analyses a real public company (default: Microsoft/MSFT);
+there is no bundled synthetic dataset — agents source figures live from SEC EDGAR + web search.
 
 ## Core design principles (do not regress these)
 
@@ -54,7 +56,7 @@ All bundled data is synthetic and for demo purposes only.
 | `agents/hosted/fsi_artifact_egress.py` | `ArtifactEgressMiddleware`: harvests Code Interpreter files and uploads them to the private `artifacts` blob container, appending a `<<<ARTIFACT ...>>>` sentinel. |
 | `agents/hosted/_azd/` | `azd ai agent` project. `azure.yaml` declares the 3 services; `agent-src/` is the deployed copy of the runtime. |
 | `agents/mcp/sec-edgar/` | Dockerfile + HTTP server for the self-hosted SEC EDGAR remote MCP tool. |
-| `api/` | FastAPI BFF: invokes hosted agents (Responses background mode + poll), parses artifact sentinels, serves `/api/artifacts/{id}`. Config is fail-fast (`PROJECT_ENDPOINT`, `STORAGE_BLOB_ENDPOINT` required). Synthetic dataset lives in `api/data`. |
+| `api/` | FastAPI BFF: invokes hosted agents (Responses background mode + poll), parses artifact sentinels, strips dead `sandbox:` links, serves `/api/artifacts/{id}`. Config is fail-fast (`PROJECT_ENDPOINT`, `STORAGE_BLOB_ENDPOINT` required). Default prompts target a real public company (MSFT); no bundled dataset — figures come from SEC EDGAR + web search. |
 | `portal/` | Next.js branded portal (3 scenario tabs, streaming, artifact download). |
 | `scripts/validate.py` | Generic post-deploy validator: runs all 3 scenarios against `API_BASE_URL`, asserts downloadable OOXML. |
 | `.env.example` | Canonical reference for every variable, grouped by phase. |
@@ -114,9 +116,13 @@ azd deploy fsi-pe-lbo -e <env>
   (`allowSharedKeyAccess=false`, `allowBlobPublicAccess=false`). If the storage account has
   `publicNetworkAccess=Disabled` with no private endpoints for BOTH networks, artifact upload fails
   with `AuthorizationFailure "This request is not authorized to perform this operation"` -- the SAME
-  message as a missing RBAC role, so it is easy to misdiagnose. Keep `publicNetworkAccess=Enabled`
-  (`infra/modules/storage.bicep` sets this explicitly) or add private endpoints for both. RBAC alone
-  is not sufficient.
+  message as a missing RBAC role, so it is easy to misdiagnose (all agent instance identities
+  already hold the role). Keep `publicNetworkAccess=Enabled` (`infra/modules/storage.bicep` sets
+  this explicitly) or add private endpoints for both. **A subscription Azure Policy can flip it back
+  to `Disabled` after deploy** (minutes to hours later), silently breaking every artifact download;
+  `deploy.ps1` re-asserts it at step 1 and step 7b, and you can repair it any time with
+  `az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow`
+  or a policy exemption. RBAC alone is not sufficient.
 - **Always sync the runtime into `_azd/agent-src` before `azd deploy`.** The source of truth is
   `agents/hosted/*.py`; the deployed copy is `agents/hosted/_azd/agent-src/*.py`. Verify with
   `Get-FileHash`. Deploying a stale copy silently ships old behavior.

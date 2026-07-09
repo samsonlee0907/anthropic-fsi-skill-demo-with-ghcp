@@ -12,7 +12,6 @@ from the infra outputs). No resource names are hardcoded, so the same image
 deploys unchanged against any environment.
 """
 import os
-from pathlib import Path
 
 
 def _require_env(name: str, hint: str) -> str:
@@ -55,23 +54,25 @@ def agent_responses_base(scenario_key: str) -> str:
 
 
 DISCLAIMER = (
-    "All figures are ILLUSTRATIVE and SYNTHETIC for demo purposes only "
-    "(fictional company NovaGrid Technologies and fictional peers). Not investment advice."
+    "All figures are AI-generated from public SEC filings and web sources for "
+    "demonstration only. Not investment advice."
 )
 
 # Each scenario is served by ONE deployed Microsoft Agent Framework HOSTED agent that
 # natively loads its bound Anthropic skills (load_skill progressive disclosure over the
 # scenario toolbox MCP) and uses Foundry-native code_interpreter/web_search plus SEC
-# EDGAR public-filing tools backed by the open-source sec-edgar-mcp package.
+# EDGAR public-filing tools backed by the open-source sec-edgar-mcp package. Every
+# scenario analyses a REAL public company: the agent sources its numbers live from SEC
+# EDGAR filings and web search (no bundled dataset), then models them in code_interpreter.
 SCENARIOS = {
     "equity-research": {
         "title": "Equity Research & Valuation",
-        "tagline": "DCF + comparables + integrated 3-statement model for NovaGrid Technologies.",
+        "tagline": "SEC-filing-grounded DCF + comparables + integrated 3-statement model.",
         "toolbox": "tb-equity-research",
         "brief": (
             "Build DCF, trading-comparables, and integrated 3-statement valuation models "
-            "with optional SEC EDGAR public-filing grounding, and deliver an "
-            "institutional-quality Excel valuation package."
+            "for a real public company, grounded in its latest SEC EDGAR filings and live "
+            "web context, and deliver an institutional-quality Excel valuation package."
         ),
         "skills": [
             "dcf-model", "comps-analysis", "3-statement-model",
@@ -83,9 +84,9 @@ SCENARIOS = {
         "tagline": "Competitive landscape, pitch deck authoring, and deck QC.",
         "toolbox": "tb-ib-pitch",
         "brief": (
-            "Build the competitive landscape, author a client-ready pitch deck (.pptx) with "
-            "supporting comps exhibits, optionally ground public-company claims in SEC EDGAR, "
-            "and run a deck QC pass before delivery."
+            "Build the competitive landscape for a real public company, author a "
+            "client-ready pitch deck (.pptx) with supporting comps exhibits grounded in "
+            "SEC EDGAR filings and web context, and run a deck QC pass before delivery."
         ),
         "skills": [
             "competitive-analysis", "comps-analysis", "pptx-author",
@@ -97,64 +98,32 @@ SCENARIOS = {
         "tagline": "LBO model build and model-integrity audit.",
         "toolbox": "tb-pe-lbo",
         "brief": (
-            "Screen the target as an LBO candidate: build the LBO model (sources & uses, "
-            "debt schedule, returns), optionally ground public-target financials in SEC EDGAR, "
+            "Screen a real public company as an LBO candidate: pull its financials from "
+            "SEC EDGAR, build the LBO model (sources & uses, debt schedule, returns), "
             "then audit the model's integrity."
         ),
         "skills": ["lbo-model", "xlsx-author", "clean-data-xls", "audit-xls"],
     },
 }
 
+# Default one-click prompts. Each targets a REAL public company (Microsoft / MSFT) and
+# is answered entirely from SEC EDGAR filings + web search + code_interpreter -- there is
+# no bundled synthetic dataset. Users can edit the mandate to analyse any public ticker.
 DEFAULT_PROMPTS = {
-    "equity-research": "Produce an equity research valuation package for NovaGrid Technologies using the synthetic dataset. If a real public ticker is provided, use SEC EDGAR for filing-backed financials and cite the filing URLs. Include a base/bull/bear DCF, trading comps vs the peer set, and a triangulated valuation range.",
-    "ib-pitch": "Prepare a concise IB pitch for NovaGrid Technologies: competitive positioning vs peers, a short pitch deck, and a QC pass on the deck. If a real public ticker is provided, use SEC EDGAR for 10-K/10-Q context and cite filing URLs.",
-    "pe-lbo": "Screen NovaGrid Technologies as an LBO candidate using the synthetic assumptions. If a real public ticker is provided, use SEC EDGAR for filing-backed financials and cite filing URLs. Build the LBO model, estimate returns (IRR/MOIC), and audit the model.",
+    "equity-research": "Produce an equity research valuation package for Microsoft Corporation (ticker MSFT). Use SEC EDGAR to pull Microsoft's latest 10-K and 10-Q filing metadata and key XBRL financials (revenue, operating income, net income, shares outstanding), cite the filing URLs and dates, use web search for the current share price and market context, then build a base/bull/bear DCF, trading comps versus large-cap software peers, and a triangulated valuation range.",
+    "ib-pitch": "Prepare a concise IB pitch for Microsoft Corporation (ticker MSFT): competitive positioning versus large-cap software and cloud peers, a short client-ready pitch deck with a competitive-positioning slide, and a QC pass on the deck. Use SEC EDGAR for Microsoft's latest 10-K headline financials and cite the filing URLs; use web search for current market context.",
+    "pe-lbo": "Screen Microsoft Corporation (ticker MSFT) as an illustrative LBO candidate. Use SEC EDGAR to pull Microsoft's latest 10-K financials (revenue, operating income, total debt, cash), cite the filing URLs and dates, then build the LBO model (sources & uses, debt schedule, returns), estimate IRR/MOIC, and audit the model.",
 }
 
-# Prompts that DELIBERATELY name a real public company/ticker so the agent exercises the
-# SEC EDGAR MCP tool (get_company_info / get_recent_filings / get_key_metrics) and cites
-# real filing URLs. Surfaced in the portal as a one-click "SEC EDGAR example" so the tool
-# is easy to demonstrate -- the default NovaGrid prompts are synthetic and never trigger it.
+# A second one-click preset that analyses a DIFFERENT real public company, so the demo
+# shows the same governed pattern generalising across tickers. Surfaced in the portal as
+# a "Try another company" button next to the Microsoft default.
 EDGAR_PROMPTS = {
-    "equity-research": "Benchmark NovaGrid Technologies against NextEra Energy (ticker NEE). Use SEC EDGAR to pull NextEra's latest 10-K filing metadata and key XBRL metrics (revenue, net income), cite the filing URL and date, then build a comparison DCF/comps package. Ground all real-company figures in the SEC filing.",
-    "ib-pitch": "Prepare an IB pitch positioning NovaGrid Technologies against Apple Inc. (ticker AAPL) as a scale benchmark. Use SEC EDGAR to pull Apple's most recent 10-K filing metadata and headline financials, cite the filing URL and date, then build a short pitch deck with a competitive-positioning slide.",
-    "pe-lbo": "Screen Tesla, Inc. (ticker TSLA) as an illustrative LBO candidate. Use SEC EDGAR to pull Tesla's latest 10-K filing metadata and key financials (revenue, operating income, total debt), cite the filing URL and date, then build the LBO model and estimate IRR/MOIC.",
+    "equity-research": "Produce an equity research valuation package for NVIDIA Corporation (ticker NVDA). Use SEC EDGAR to pull NVIDIA's latest 10-K/10-Q filing metadata and key XBRL metrics (revenue, operating income, net income), cite the filing URLs and dates, add web-sourced market context and share price, then build a base/bull/bear DCF and trading comps versus semiconductor peers.",
+    "ib-pitch": "Prepare an IB pitch for Apple Inc. (ticker AAPL): competitive positioning versus hardware and services peers, a short pitch deck with a competitive-positioning slide, and a deck QC pass. Use SEC EDGAR for Apple's most recent 10-K headline financials, cite the filing URL and date, and use web search for market context.",
+    "pe-lbo": "Screen Tesla, Inc. (ticker TSLA) as an illustrative LBO candidate. Use SEC EDGAR to pull Tesla's latest 10-K financials (revenue, operating income, total debt), cite the filing URL and date, then build the LBO model and estimate IRR/MOIC.",
 }
 
-
-def _data_dir() -> Path:
-    # Single source of truth: api/data (also what the Docker image ships as /app/data).
-    return Path(os.environ.get("DATA_DIR", str(Path(__file__).resolve().parents[1] / "data")))
-
-
-def load_data_context() -> str:
-    """Concatenate the synthetic datasets into a compact context block injected into agents.
-
-    code_interpreter has no internet, so the data is supplied in-context.
-    """
-    d = _data_dir()
-    if not d.exists():
-        return "(No synthetic dataset directory found.)"
-    parts = []
-    wanted = [
-        "companies.json",
-        "novagrid_financials.csv",
-        "novagrid_assumptions.json",
-        "peer_comps.csv",
-        "lbo_assumptions.json",
-        "market_context.json",
-    ]
-    for name in wanted:
-        p = d / name
-        if p.exists():
-            try:
-                parts.append(f"### FILE: {name}\n{p.read_text(encoding='utf-8')}")
-            except Exception:  # noqa: BLE001
-                pass
-    return "\n\n".join(parts) if parts else "(No synthetic dataset files found.)"
-
-
-DATA_CONTEXT = load_data_context()
 
 # Static metadata to enrich the live toolbox listing (the list API returns only
 # name/id/version, not the per-version description/tools). Keys match toolbox names.

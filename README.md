@@ -10,8 +10,9 @@ Clone it, run one script, and you get three working FSI scenario agents in your 
 subscription. Every resource name is derived from a single `environmentName`; nothing is
 hardcoded to a particular deployment.
 
-> All companies, peers, figures, and assumptions bundled here are **synthetic** for
-> demonstration only. This is not investment advice.
+> Every scenario analyses a **real public company** (the default one-click prompts use
+> **Microsoft / MSFT**), sourcing figures live from **SEC EDGAR** filings and web search.
+> All output is AI-generated for demonstration only and is **not investment advice**.
 
 ## Scenarios
 
@@ -24,8 +25,11 @@ workflow, each reaching its skills through a scenario toolbox.
 | **Investment Banking Pitch** | `fsi-ib-pitch` | `tb-ib-pitch` | `competitive-analysis`, `comps-analysis`, `pptx-author`, `ppt-template-creator`, `deck-refresh`, `ib-check-deck`, `xlsx-author` | `.pptx` pitch deck |
 | **Private Equity LBO Screening** | `fsi-pe-lbo` | `tb-pe-lbo` | `lbo-model`, `xlsx-author`, `clean-data-xls`, `audit-xls` | `.xlsx` LBO workbook |
 
-Optionally, agents can ground public-company claims in **SEC EDGAR** filings via a
-self-hosted remote MCP tool.
+Each scenario analyses a **real public company** end-to-end: the agent resolves the
+company in **SEC EDGAR**, pulls its latest 10-K/10-Q financials via a self-hosted remote
+MCP tool, adds live market context with **web search**, and models it in
+**code interpreter**. The default one-click prompts target Microsoft (MSFT); edit the
+mandate to analyse any ticker.
 
 ## Quickstart
 
@@ -144,7 +148,12 @@ flowchart LR
 5. **Keep artifact storage network-reachable.** Blob egress uses AAD/RBAC over the public
    endpoint (`allowSharedKeyAccess=false`, no anonymous access). Keep
    `publicNetworkAccess=Enabled` unless you add private endpoints for both the agent compute
-   and the Container Apps env — RBAC alone is not sufficient.
+   and the Container Apps env — RBAC alone is not sufficient. A subscription **Azure Policy**
+   can flip it back to `Disabled` *after* deploy, breaking artifact download with an
+   `AuthorizationFailure` that looks like a missing role; `deploy.ps1` re-asserts it, and you
+   can repair it any time with
+   `az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow`
+   (or request a policy exemption for the resource group).
 
 ## Repository structure
 
@@ -157,7 +166,7 @@ flowchart LR
 │   ├── hosted/             # env-driven hosted-agent runtime + Blob artifact egress + azd project
 │   ├── mcp/sec-edgar/      # self-hosted SEC EDGAR remote MCP server (optional)
 │   └── scripts/            # register skills, create + bind toolboxes
-├── api/                    # FastAPI BFF (background Responses, SSE, artifact proxy) + synthetic data
+├── api/                    # FastAPI BFF (background Responses, SSE, artifact proxy)
 ├── portal/                 # Next.js portal (3 scenario tabs, streaming, artifact download)
 ├── scripts/                # deploy helpers + generic end-to-end validator
 └── docs/runbook.md         # operations runbook, RBAC, gotchas, teardown

@@ -1,4 +1,4 @@
-metadata description = 'Storage account with blob containers for generated artifacts and synthetic datasets.'
+metadata description = 'Storage account with blob containers for generated artifacts.'
 
 param location string
 param tags object

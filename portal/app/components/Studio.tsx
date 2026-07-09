@@ -358,8 +358,9 @@ export function Studio() {
             <h1 id="studio-title">Run scenario-based financial agents backed by a governed skill library.</h1>
             <p className="heroCopy">
               Select an FSI workflow, tailor the mandate, and watch a dedicated scenario agent load
-              the relevant Anthropic-derived skills, run code interpreter, and produce live narrative
-              output plus downloadable Excel and PowerPoint artifacts.
+              the relevant Anthropic-derived skills, pull live figures from SEC EDGAR filings and
+              web search, run code interpreter, and produce narrative output plus downloadable
+              Excel and PowerPoint artifacts.
             </p>
           </div>
           <aside className="heroPanel" aria-label="Run readiness">
@@ -463,7 +464,7 @@ export function Studio() {
                     disabled={isRunning}
                     onClick={() => setPrompt(selectedScenario.default_prompt)}
                   >
-                    Default (synthetic)
+                    Default (Microsoft)
                   </button>
                   {selectedScenario.edgar_prompt ? (
                     <button
@@ -471,9 +472,9 @@ export function Studio() {
                       type="button"
                       disabled={isRunning}
                       onClick={() => setPrompt(selectedScenario.edgar_prompt ?? '')}
-                      title="Loads a prompt that names a real public ticker so the agent calls the SEC EDGAR MCP tool"
+                      title="Loads the same workflow for a different real public company, sourced from SEC EDGAR filings"
                     >
-                      🏛️ SEC EDGAR example
+                      🏛️ Try another company
                     </button>
                   ) : null}
                 </div>
@@ -485,7 +486,7 @@ export function Studio() {
                   rows={9}
                 />
                 <div className="composerActions">
-                  <p>All data is illustrative and synthetic — not investment advice.</p>
+                  <p>AI-generated from public SEC filings and web sources — not investment advice.</p>
                   <button className="primaryButton" disabled={isRunning} onClick={runWorkflow} type="button">
                     {isRunning ? (
                       <>

@@ -8,7 +8,9 @@ Everything is parameterized by `environmentName` (referred to below as `<env>`).
 resource names derive from it, so a second `<env>` gives a fully isolated deployment. No
 resource names, endpoints, principal IDs, or local paths are hardcoded.
 
-All bundled data is synthetic and for demo purposes only.
+All output is AI-generated from public SEC filings and web sources for demo purposes only
+(not investment advice). The default one-click prompts analyse Microsoft (MSFT); edit the
+mandate to target any public ticker.
 
 ## 1. Naming convention
 
@@ -188,8 +190,21 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   (`allowSharedKeyAccess=false`, `allowBlobPublicAccess=false`). If
   `publicNetworkAccess=Disabled` with no private endpoints for both networks, artifact upload
   fails with `AuthorizationFailure "This request is not authorized..."` — the SAME message as
-  missing RBAC, so it is easy to misdiagnose. `infra/modules/storage.bicep` keeps
-  `publicNetworkAccess=Enabled`; RBAC alone is not sufficient.
+  missing RBAC, so it is easy to misdiagnose as an identity problem (all three agent instance
+  identities already hold `Storage Blob Data Contributor`). `infra/modules/storage.bicep` keeps
+  `publicNetworkAccess=Enabled`, but a subscription **Azure Policy** with a `modify`/remediation
+  effect can flip it back to `Disabled` *after* deploy — often minutes to hours later — silently
+  breaking every artifact download. `deploy.ps1` re-asserts `Enabled` at step 1 and again at
+  **step 7b** (after agents, before validation); if it regresses again later, repair it with:
+  `az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow --bypass AzureServices`.
+  For a durable fix, request a **policy exemption** for the resource group, or add private
+  endpoints for both the agent compute and the Container Apps environment. RBAC alone is not
+  sufficient.
+- **Dead `sandbox:/mnt/data` links are stripped by the BFF.** The model often narrates
+  `[Download the workbook](sandbox:/mnt/data/...)` links that only resolve inside the code
+  interpreter sandbox and dead-end at the portal origin. The real download is the artifact
+  **button** the BFF renders from the blob sentinel, so `orchestrator._strip_sandbox_links`
+  removes those links from the narrative before it reaches the portal.
 - **Sync the runtime into `_azd/agent-src` before `azd deploy`** (verify with `Get-FileHash`).
 - **Two toolbox connections, one native tool.** The runtime opens the scenario toolbox
   **twice**: (1) a `load_tools=False` *skills* connection consumed via `as_skills_provider()`
@@ -236,12 +251,15 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   scenario. A single un-retried `500` on the poll — not a real run failure — is what previously
   caused sporadic 1/3 or 2/3 validation results.
 
-## 9. Moving from synthetic data to live vendor data
+## 9. Extending to more live data sources
+
+The scenarios already source real financials from **SEC EDGAR** (self-hosted MCP) plus
+**web search**. To add richer vendor data:
 
 1. Store vendor endpoints and secrets in Key Vault.
 2. Register vendor MCP tools or toolbox tools in the Foundry project.
 3. Expose each tool only through the scenario toolbox that needs it.
-4. Update the corresponding skill instructions to prefer live data over synthetic data.
+4. Update the corresponding skill instructions to use the new tool where it improves coverage.
 
 | Workflow need | Vendor MCP examples |
 |---|---|
