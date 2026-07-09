@@ -1,4 +1,4 @@
-"""Server-side artifact egress for the v3 FSI hosted agents.
+"""Server-side artifact egress for the FSI hosted agents.
 
 Why this exists
 ---------------
@@ -41,7 +41,7 @@ from agent_framework import AgentMiddleware, Content
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 
-logger = logging.getLogger("fsi.hosted.v3.egress")
+logger = logging.getLogger("fsi.hosted.egress")
 
 ARTIFACTS_CONTAINER: Final = os.environ.get("ARTIFACTS_CONTAINER", "artifacts")
 

@@ -95,10 +95,10 @@ The hosted-agent module (`agents/hosted/*.py`) is the source of truth; the deplo
 ships old behavior.
 
 ```powershell
-Copy-Item agents/hosted/fsi_hosted_agent_v3.py agents/hosted/_azd/agent-src/ -Force
+Copy-Item agents/hosted/fsi_hosted_agent.py agents/hosted/_azd/agent-src/ -Force
 Copy-Item agents/hosted/fsi_artifact_egress.py agents/hosted/_azd/agent-src/ -Force
 Copy-Item agents/hosted/requirements.txt       agents/hosted/_azd/agent-src/ -Force
-Get-FileHash agents/hosted/fsi_hosted_agent_v3.py, agents/hosted/_azd/agent-src/fsi_hosted_agent_v3.py
+Get-FileHash agents/hosted/fsi_hosted_agent.py, agents/hosted/_azd/agent-src/fsi_hosted_agent.py
 
 cd agents/hosted/_azd
 $env:GH_TOKEN = gh auth token; $env:GITHUB_TOKEN = $env:GH_TOKEN

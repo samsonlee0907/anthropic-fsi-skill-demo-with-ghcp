@@ -52,7 +52,7 @@ there is no bundled synthetic dataset — agents source figures live from SEC ED
 | `agents/scripts/provision_skills.py` | Register each skill as a Foundry skill. Skill content is fetched at runtime from a pinned Anthropic commit (`ANTHROPIC_SKILLS_REF`), not stored in-repo. |
 | `agents/scripts/create_toolboxes.py` / `bind_skills_to_toolboxes.py` | Create the 3 scenario toolboxes and bind + promote skill references. |
 | `agents/scripts/_common.py` | Shared `require_project_endpoint()` (fail-fast, no hardcoded default). |
-| `agents/hosted/fsi_hosted_agent_v3.py` | The single env-driven hosted-agent runtime for all 3 scenarios. |
+| `agents/hosted/fsi_hosted_agent.py` | The single env-driven hosted-agent runtime for all 3 scenarios. |
 | `agents/hosted/fsi_artifact_egress.py` | `ArtifactEgressMiddleware`: harvests Code Interpreter files and uploads them to the private `artifacts` blob container, appending a `<<<ARTIFACT ...>>>` sentinel. |
 | `agents/hosted/_azd/` | `azd ai agent` project. `azure.yaml` declares the 3 services; `agent-src/` is the deployed copy of the runtime. |
 | `agents/mcp/sec-edgar/` | Dockerfile + HTTP server for the self-hosted SEC EDGAR remote MCP tool. |
@@ -95,10 +95,10 @@ this ordered flow (each step also has a documented manual equivalent in the runb
 ### Deploy the hosted agents
 
 ```powershell
-Copy-Item agents/hosted/fsi_hosted_agent_v3.py agents/hosted/_azd/agent-src/ -Force
+Copy-Item agents/hosted/fsi_hosted_agent.py agents/hosted/_azd/agent-src/ -Force
 Copy-Item agents/hosted/fsi_artifact_egress.py agents/hosted/_azd/agent-src/ -Force
 # verify the copies match before deploying:
-Get-FileHash agents/hosted/fsi_hosted_agent_v3.py, agents/hosted/_azd/agent-src/fsi_hosted_agent_v3.py
+Get-FileHash agents/hosted/fsi_hosted_agent.py, agents/hosted/_azd/agent-src/fsi_hosted_agent.py
 
 cd agents/hosted/_azd
 $env:GH_TOKEN = gh auth token; $env:GITHUB_TOKEN = $env:GH_TOKEN

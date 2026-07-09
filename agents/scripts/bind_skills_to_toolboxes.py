@@ -1,4 +1,4 @@
-"""Bind the registered Foundry skills to the 3 scenario toolboxes (v2 design).
+"""Bind the registered Foundry skills to the 3 scenario toolboxes.
 
 Each scenario toolbox bundles the shared Foundry-native tools (code_interpreter,
 web_search) PLUS the Anthropic skills relevant to that scenario, referenced by
@@ -104,7 +104,7 @@ def _base_tools() -> list[dict]:
     IMPORTANT -- catalog vs. runtime execution:
       * `web_search` (bound as `web`) and the SEC EDGAR MCP server ARE executed
         THROUGH this toolbox at runtime. The hosted-agent runtime
-        (fsi_hosted_agent_v3.py) opens a second toolbox connection with
+        (fsi_hosted_agent.py) opens a second toolbox connection with
         `load_tools=True` and an `allowed_tools` allow-list of `web` + `sec_edgar___*`,
         so those tools run over the governed toolbox MCP endpoint — the toolbox is the
         single, unified, governed tool surface.

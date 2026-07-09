@@ -236,7 +236,7 @@ Pop-Location
 if (-not $SkipAgents) {
     Write-Host "== 6. Deploying hosted agents ==" -ForegroundColor Cyan
     # Sync runtime source into the azd agent-src copy (critical: stale copies ship old behavior).
-    Copy-Item (Join-Path $hostedDir 'fsi_hosted_agent_v3.py') (Join-Path $azdDir 'agent-src\fsi_hosted_agent_v3.py') -Force
+    Copy-Item (Join-Path $hostedDir 'fsi_hosted_agent.py') (Join-Path $azdDir 'agent-src\fsi_hosted_agent.py') -Force
     Copy-Item (Join-Path $hostedDir 'fsi_artifact_egress.py') (Join-Path $azdDir 'agent-src\fsi_artifact_egress.py') -Force
     Copy-Item (Join-Path $hostedDir 'requirements.txt')       (Join-Path $azdDir 'agent-src\requirements.txt') -Force
 

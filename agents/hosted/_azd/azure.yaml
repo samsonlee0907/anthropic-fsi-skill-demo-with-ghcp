@@ -8,7 +8,7 @@ services:
         language: python
         codeConfiguration:
             dependencyResolution: remote_build
-            entryPoint: fsi_hosted_agent_v3.py
+            entryPoint: fsi_hosted_agent.py
             runtime: python_3_13
         container:
             resources:
@@ -52,7 +52,7 @@ services:
         language: python
         codeConfiguration:
             dependencyResolution: remote_build
-            entryPoint: fsi_hosted_agent_v3.py
+            entryPoint: fsi_hosted_agent.py
             runtime: python_3_13
         container:
             resources:
@@ -96,7 +96,7 @@ services:
         language: python
         codeConfiguration:
             dependencyResolution: remote_build
-            entryPoint: fsi_hosted_agent_v3.py
+            entryPoint: fsi_hosted_agent.py
             runtime: python_3_13
         container:
             resources:

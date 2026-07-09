@@ -1,4 +1,4 @@
-# Fully-pinned, pre-resolved dependency set for the FSI v2 API container.
+# Fully-pinned, pre-resolved dependency set for the FSI API container.
 # Resolved locally (python 3.12) to eliminate pip backtracking in Docker.
 # Top-level intent: fastapi, uvicorn, azure-ai-projects 2.2.0, azure-identity,
 # openai, python-multipart, azure-monitor-opentelemetry 1.8.8,

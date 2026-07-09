@@ -1,11 +1,11 @@
-"""FSI scenario **hosted agent** (v3) — Microsoft Agent Framework + Foundry toolbox MCP.
+"""FSI scenario **hosted agent** — Microsoft Agent Framework + Foundry toolbox MCP.
 
-This is the v3 runtime: one containerized Microsoft Agent Framework (MAF) agent per
+This runtime packages one containerized Microsoft Agent Framework (MAF) agent per
 FSI scenario, deployed **into Foundry Agent Service** as a genuine hosted agent
 (``azd ai agent``) and served over the Foundry Responses protocol by
 :class:`~agent_framework_foundry_hosting.ResponsesHostServer`.
 
-How this differs from the v2 in-process module (``fsi_scenario_agent.py``, kept intact):
+Design highlights:
 
 1. **Skills come over the toolbox MCP, for real.** Instead of downloading skill
    archives at startup, the agent embeds a :class:`FoundryToolbox` pointed at its
@@ -125,7 +125,7 @@ except Exception:  # pragma: no cover - defensive across sdk versions
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("fsi.hosted.v3")
+logger = logging.getLogger("fsi.hosted")
 
 AI_SCOPE: Final = "https://ai.azure.com/.default"
 

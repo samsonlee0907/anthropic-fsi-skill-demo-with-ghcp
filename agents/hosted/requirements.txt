@@ -1,14 +1,14 @@
-# v3 Foundry HOSTED agent runtime (fsi_hosted_agent_v3.py + fsi_artifact_egress.py).
+# Foundry HOSTED agent runtime (fsi_hosted_agent.py + fsi_artifact_egress.py).
 #
 # Pinned to the exact stack validated in-process:
 # skills-over-MCP (FoundryToolbox.as_skills_provider) + native code_interpreter +
 # ToolApprovalMiddleware + server-side Blob artifact egress.
 #
 # NOTE: agent-framework-foundry-hosting 1.0.0a260630 requires agent-framework-core
-# >=1.10.0 (this is why the v2 api/requirements.txt could NOT use this hosting pkg).
+# >=1.10.0 (this is why the api/requirements.txt could NOT use this hosting pkg).
 # Depend on the concrete sub-packages the code imports, NOT the agent-framework[all]
 # meta package (its orchestrations extra pins conflicting core versions -> pip
-# ResolutionImpossible, the failure seen during v2 image builds).
+# ResolutionImpossible, the failure seen during earlier image builds).
 
 agent-framework-core==1.10.0
 agent-framework-foundry==1.10.0

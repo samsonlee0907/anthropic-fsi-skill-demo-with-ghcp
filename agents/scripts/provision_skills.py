@@ -1,4 +1,4 @@
-"""Register the Anthropic financial-analysis skills as Foundry skills (v2 design).
+"""Register the Anthropic financial-analysis skills as Foundry skills.
 
 Source of truth: the Anthropic `financial-services` repo, pinned to an immutable
 commit so every run registers byte-identical content:
