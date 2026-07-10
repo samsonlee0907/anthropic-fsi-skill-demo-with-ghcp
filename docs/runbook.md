@@ -44,8 +44,9 @@ mandate to target any public ticker.
   East US 2 is the tested default. Some regions (observed: Sweden Central) can have model quota but
   be out of Container Apps managed-environment capacity (`ManagedEnvironmentCapacityHeavyUsageError`)
   — switch regions if you hit that at the infra step.
-- `az`, `azd` (with the Foundry agents extension — install with
-  `azd extension install azure.ai.agents`, verify with `azd ai agent --help`),
+- `az`, `azd` (with the Foundry extension — install the GA unified bundle with
+  `azd ext install microsoft.foundry`, or the legacy `azd extension install azure.ai.agents`;
+  either works, verify with `azd ai agent --help`),
   `gh` (authenticated), Python 3.11+.
 - `az login`; `pip install -r agents/scripts/requirements.txt` (pinned deps for the
   provisioning scripts). Multi-subscription users: `az account set --subscription <id>`
@@ -330,6 +331,46 @@ The scenarios already source real financials from **SEC EDGAR** (self-hosted MCP
 | Credit and issuer context | Moody's |
 | Transcripts and news | Aiera, MT Newswire |
 | Source documents | Box, Egnyte |
+
+### GA toolbox alignment & recommended enhancements
+
+Foundry **toolbox is GA** (see the [toolbox how-to](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox?pivots=python)).
+This asset already matches the GA contract: the MCP **consumer** endpoint
+(`{project_endpoint}/toolboxes/{name}/mcp?api-version=v1`, always serving the promoted default
+version), the `https://ai.azure.com/.default` auth scope, and `{server_label}___{tool_name}`
+(three underscores) MCP tool naming — which is why the runtime's allow-list keys off
+`sec_edgar___*`. The following are safe, GA-era improvements to adopt when you next iterate;
+each changes runtime behavior, so validate with `scripts/validate.py` after applying:
+
+1. **Enable Tool Search on large toolboxes.** Add a `{ "type": "toolbox_search_preview" }`
+   entry to each toolbox spec in `agents/scripts/create_toolboxes.py`. It swaps the full
+   `tools/list` for `tool_search` + `call_tool` meta-tools, so model context stays flat as a
+   toolbox grows past ~5 tools (each scenario toolbox already bundles ~12 skills + web + SEC
+   EDGAR + code interpreter). It does **not** count toward the one-unnamed-tool-per-type limit.
+   Update the agent instructions to call `tool_search` when a needed capability isn't visible.
+   See [Tool Search](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/tool-search).
+2. **Move to declarative provisioning.** GA `azd ai skill create` +
+   `azd ai toolbox create --from-file <toolbox>.yaml` (unified `microsoft.foundry` bundle) can
+   replace the REST-based `provision_skills.py` / `create_toolboxes.py` /
+   `bind_skills_to_toolboxes.py` scripts. The toolbox YAML references connections, tools,
+   `skills`, and `policies` by name with no embedded credentials. This removes the preview-era
+   `Foundry-Features: Toolboxes=V1Preview` header workaround those scripts carry (GA clients and
+   the GA smoke tests no longer send that header; it is currently harmless but no longer
+   required).
+3. **Re-test toolbox-native `code_interpreter`.** The runtime runs Code Interpreter natively
+   (via `FoundryChatClient`) to dodge a preview-only toolbox-CI `500`. GA lists CI as a
+   supported toolbox tool, so re-test routing it through the toolbox; if it works you can drop
+   the native-CI special case and the allow-list exclusion.
+4. **Avoid `FOUNDRY_`-prefixed custom env vars.** The platform reserves the `FOUNDRY_` prefix
+   and may overwrite such vars at runtime. The agent currently reads `FOUNDRY_PROJECT_ENDPOINT`
+   (injected via `azure.yaml`); if you add your own endpoint/config vars, prefer unprefixed
+   names like `TOOLBOX_ENDPOINT` / `PROJECT_ENDPOINT`.
+
+> **RBAC (GA):** the GA toolbox prerequisites ask for the **Foundry User** role on the Foundry
+> *project* for every identity that touches a toolbox (developer, hosted-agent identity, and —
+> for OAuth tools — the end user). This demo's account-scoped `Cognitive Services User` grants
+> satisfy the current runtime calls; add **Foundry User** on the project if you extend the
+> toolbox with OAuth-based or project-scoped tools.
 
 ## 10. Teardown
 

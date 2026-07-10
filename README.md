@@ -75,11 +75,14 @@ supporting `.pptx` deck and `.xlsx` model as download buttons.*
 - Tools on PATH: **Azure CLI (`az`)**, **Azure Developer CLI (`azd`)**, **`gh`** (GitHub
   CLI, authenticated — `deploy.ps1` reads `gh auth token` to let `azd` deploy the hosted
   agents), **Python 3.11+**.
-- The azd **Foundry agents** extension, which provides the hosted-agent `azd deploy` and
-  `azd ai agent` commands:
+- The azd **Foundry** extension, which provides the hosted-agent `azd deploy` and
+  `azd ai agent` commands. Install the GA unified bundle (provides `azd ai agent`,
+  `connection`, `skill`, `toolbox`, and more):
   ```powershell
-  azd extension install azure.ai.agents   # verify: azd ai agent --help
+  azd ext install microsoft.foundry        # verify: azd ai agent --help
   ```
+  > The legacy individual beta extension (`azd extension install azure.ai.agents`) also
+  > works; `deploy.ps1` accepts either packaging.
 - `az login` to the target subscription. If you have more than one subscription, either
   `az account set --subscription <id>` first or pass `-SubscriptionId <id>` to `deploy.ps1`.
 - Python deps for the provisioning scripts (pinned):
@@ -88,7 +91,7 @@ supporting `.pptx` deck and `.xlsx` model as download buttons.*
   ```
 
 > `deploy.ps1` preflights these: it fails fast with the exact fix command if the
-> `azure.ai.agents` extension or the Python deps are missing, **before** provisioning any
+> Foundry azd extension or the Python deps are missing, **before** provisioning any
 > billable infra.
 
 ### Deploy
@@ -127,6 +130,44 @@ Resume after a failure with the `-Skip*` switches (e.g. `-SkipInfra -SkipSkills`
 
 See [`docs/runbook.md`](docs/runbook.md) for step-by-step internals, RBAC, gotchas, and
 teardown, and [`.env.example`](.env.example) for every configurable variable.
+
+### Launch with GitHub Copilot
+
+This repo ships a [`.github/copilot-instructions.md`](.github/copilot-instructions.md) that
+teaches an agentic Copilot the whole design and the exact end-to-end deploy order. So instead
+of driving `deploy.ps1` yourself, you can let Copilot run it for you:
+
+1. Open the repo in an agentic Copilot surface (GitHub Copilot CLI, or VS Code with an
+   agent mode). The instructions file is picked up automatically.
+2. Make sure the [prerequisites](#prerequisites) are met (`az login`, the `microsoft.foundry`
+   azd extension, Python deps), then prompt, for example:
+   > *"Deploy this stack to a fresh resource group in eastus2 as env `fsi-demo`, then run the
+   > validator and give me the portal URL."*
+3. Copilot follows the repo's documented flow (provision → skills/toolboxes → SEC EDGAR →
+   agents → RBAC → api/portal → validate) and stops to ask when it needs input (e.g.
+   `-PrincipalId` under a Conditional Access challenge).
+
+To scaffold or extend the **Foundry toolbox / hosted agent** wiring with Copilot, install the
+GA [GitHub Copilot for Azure](https://learn.microsoft.com/en-us/azure/developer/github-copilot-azure/introduction)
+`microsoft-foundry` skill — its
+[toolbox reference](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/microsoft-foundry/foundry-agent/create/references/toolbox-reference.md)
+and [use-toolbox-in-hosted-agent](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/microsoft-foundry/foundry-agent/create/references/use-toolbox-in-hosted-agent.md)
+guides describe the same MCP endpoint contract this repo implements.
+
+### GA alignment notes
+
+Foundry **toolbox is now GA** ("Build" + "Consume" pillars). This asset already follows the
+GA contract — MCP consumer endpoint (`/toolboxes/{name}/mcp?api-version=v1`, always the default
+version), `https://ai.azure.com/.default` auth scope, and `{server_label}___{tool}` (triple
+underscore) MCP tool naming. A few GA-era enhancements are documented as recommended follow-ups
+in [`docs/runbook.md` §9](docs/runbook.md#9-extending-to-more-live-data-sources):
+
+- **Tool Search** (`toolbox_search_preview`) to keep model context flat as toolboxes grow
+  past ~5 tools.
+- **Declarative provisioning** via `azd ai toolbox create --from-file` + `azd ai skill create`
+  (GA), which can replace this repo's REST-based provisioning scripts.
+- **Toolbox-native `code_interpreter`** (GA-supported) — this repo runs CI natively to dodge a
+  preview-era 500; worth re-testing on the GA toolbox.
 
 ## Architecture
 

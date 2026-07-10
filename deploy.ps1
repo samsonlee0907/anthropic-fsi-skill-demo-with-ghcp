@@ -139,12 +139,13 @@ if (-not $SkipSkills) {
     }
 }
 
-# Verify the azd Foundry-agents extension is present (provides hosted-agent `azd deploy`
-# and `azd ai agent`). Skip the check when not deploying agents.
+# Verify an azd Foundry extension providing `azd ai agent` + hosted-agent `azd deploy`
+# is present. Accept either packaging: the GA unified bundle `microsoft.foundry` or the
+# legacy individual `azure.ai.agents` beta. Skip the check when not deploying agents.
 if (-not $SkipAgents) {
-    $agentsExt = azd extension list --installed 2>$null | Select-String -Pattern 'azure\.ai\.agents'
+    $agentsExt = azd extension list --installed 2>$null | Select-String -Pattern 'microsoft\.foundry|azure\.ai\.agents'
     if (-not $agentsExt) {
-        throw "azd 'azure.ai.agents' extension not installed. Run: azd extension install azure.ai.agents"
+        throw "azd Foundry extension not installed. Install the GA unified bundle: 'azd ext install microsoft.foundry' (or the legacy 'azd extension install azure.ai.agents'). Verify with: azd ai agent --help"
     }
 }
 
