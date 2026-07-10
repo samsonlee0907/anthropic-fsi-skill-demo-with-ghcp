@@ -15,7 +15,7 @@ services:
                 cpu: "0.5"
                 memory: 1Gi
         environmentVariables:
-            - name: FOUNDRY_PROJECT_ENDPOINT
+            - name: FSI_PROJECT_ENDPOINT
               value: ${FOUNDRY_PROJECT_ENDPOINT}
             - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
               value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
@@ -25,14 +25,6 @@ services:
               value: ${STORAGE_BLOB_ENDPOINT}
             - name: ARTIFACTS_CONTAINER
               value: artifacts
-            - name: SEC_EDGAR_MCP_URL
-              value: ${SEC_EDGAR_MCP_URL}
-            - name: FSI_MCP_KEY
-              value: ${FSI_MCP_KEY}
-            - name: FSI_MCP_KEY_HEADER
-              value: x-fsi-mcp-key
-            - name: SEC_EDGAR_DEEP_TOOLS
-              value: "false"
             - name: FSI_STORE
               value: "false"
             - name: ENABLE_INSTRUMENTATION
@@ -59,7 +51,7 @@ services:
                 cpu: "0.5"
                 memory: 1Gi
         environmentVariables:
-            - name: FOUNDRY_PROJECT_ENDPOINT
+            - name: FSI_PROJECT_ENDPOINT
               value: ${FOUNDRY_PROJECT_ENDPOINT}
             - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
               value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
@@ -69,14 +61,6 @@ services:
               value: ${STORAGE_BLOB_ENDPOINT}
             - name: ARTIFACTS_CONTAINER
               value: artifacts
-            - name: SEC_EDGAR_MCP_URL
-              value: ${SEC_EDGAR_MCP_URL}
-            - name: FSI_MCP_KEY
-              value: ${FSI_MCP_KEY}
-            - name: FSI_MCP_KEY_HEADER
-              value: x-fsi-mcp-key
-            - name: SEC_EDGAR_DEEP_TOOLS
-              value: "false"
             - name: FSI_STORE
               value: "false"
             - name: ENABLE_INSTRUMENTATION
@@ -103,7 +87,7 @@ services:
                 cpu: "0.5"
                 memory: 1Gi
         environmentVariables:
-            - name: FOUNDRY_PROJECT_ENDPOINT
+            - name: FSI_PROJECT_ENDPOINT
               value: ${FOUNDRY_PROJECT_ENDPOINT}
             - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
               value: ${AZURE_AI_MODEL_DEPLOYMENT_NAME}
@@ -113,14 +97,6 @@ services:
               value: ${STORAGE_BLOB_ENDPOINT}
             - name: ARTIFACTS_CONTAINER
               value: artifacts
-            - name: SEC_EDGAR_MCP_URL
-              value: ${SEC_EDGAR_MCP_URL}
-            - name: FSI_MCP_KEY
-              value: ${FSI_MCP_KEY}
-            - name: FSI_MCP_KEY_HEADER
-              value: x-fsi-mcp-key
-            - name: SEC_EDGAR_DEEP_TOOLS
-              value: "false"
             - name: FSI_STORE
               value: "false"
             - name: ENABLE_INSTRUMENTATION

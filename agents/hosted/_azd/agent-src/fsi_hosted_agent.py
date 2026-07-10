@@ -16,26 +16,35 @@ Design highlights:
    disclosure, SEP-2640) — native skill consumption straight off the governed
    toolbox catalog.
 
-2. **web_search and SEC EDGAR execute THROUGH the governed toolbox.** A second
-   :class:`FoundryToolbox` connection (``load_tools=True``, ``allowed_tools`` restricted
-   to ``web`` + ``sec_edgar___*``) is placed in the agent's ``tools`` list, so the model
-   invokes web search and SEC EDGAR filings as client-side function tools whose
-   execution is routed over the scenario toolbox MCP endpoint. The toolbox is therefore
-   the single, unified, governed tool surface — not merely a catalog. The self-hosted
-   ``sec-edgar-mcp`` server (``ca-secedgar-mcp-<env>``) is registered in each scenario
-   toolbox as an ``mcp`` tool and reached this way; ``web_search`` is registered as the
-   ``web`` tool. The mandatory ``Foundry-Features: Toolboxes=V1Preview`` header is set on
-   the toolbox HTTP client.
+2. **web_search and SEC EDGAR execute THROUGH the governed toolbox via GA Tool
+   Search.** Each scenario toolbox enables **Tool Search** (``toolbox_search_preview``,
+   surfaced as the ``tool_search`` meta-tool), so its MCP ``tools/list`` returns only two
+   meta-tools — ``tool_search`` (natural-language discovery) and ``call_tool`` (invoke a
+   discovered tool by name) — and every underlying tool (``web`` and the full
+   ``sec-edgar___*`` set) is hidden behind them. A second :class:`FoundryToolbox`
+   connection (``load_tools=True``, ``allowed_tools`` restricted to ``tool_search`` +
+   ``call_tool``) is placed in the agent's ``tools`` list, so the model discovers and
+   invokes web search + SEC EDGAR filings over the governed toolbox MCP endpoint. The
+   toolbox is therefore the single, unified, governed tool surface — and Tool Search
+   keeps the context flat now that the SEC EDGAR **project connection** exposes its full
+   tool set (the preview per-scenario ``allowed_tools`` filter is gone under the GA
+   connection model). The self-hosted ``sec-edgar-mcp`` server (``ca-secedgar-mcp-<env>``)
+   is registered as a GA ``remote-tool`` project **connection** named ``sec-edgar``
+   (custom-key header auth), so its tools namespace as ``sec-edgar___<tool>``;
+   ``web_search`` is bound as the ``web`` tool. The ``Foundry-Features:
+   Toolboxes=V1Preview`` header is still set on the toolbox HTTP client (harmless on GA).
 
 3. **code_interpreter is the Foundry-native Responses sandbox tool**
    (``FoundryChatClient.get_code_interpreter_tool``), NOT the toolbox's, and is the ONE
-   tool kept native. The toolbox-MCP ``code_interpreter`` tool returns a reproducible
-   server-side ``500`` in preview (confirmed live on this project, even with
-   ``container: {type: auto}`` and the ``Foundry-Features`` header), so it is excluded
-   from the tools-toolbox ``allowed_tools`` and the reliable native sandbox builds the
-   formula-driven ``.xlsx`` / ``.pptx`` deliverables instead. Excluding it also avoids a
-   name collision that would let the broken toolbox ``code_interpreter`` shadow the
-   working native one.
+   tool kept native. The toolbox-MCP ``code_interpreter`` returned a reproducible
+   server-side ``500`` in preview, and — more fundamentally — the
+   :class:`~fsi_artifact_egress.ArtifactEgressMiddleware` harvests artifacts by the
+   NATIVE sandbox ``container_id`` (see principle 4), so the deliverables MUST be built
+   natively. The GA scenario toolboxes therefore deliberately OMIT ``code_interpreter``
+   entirely: it is not in the catalog, so Tool Search cannot surface it and the model
+   cannot accidentally route deliverable-building through the (broken, and egress-blind)
+   toolbox sandbox. The reliable native sandbox builds the formula-driven ``.xlsx`` /
+   ``.pptx`` deliverables.
 
 4. **Artifacts egress server-side to Blob Storage.** The ``ResponsesHostServer``
    HTTP wrapper passes text content but strips code_interpreter file citations /
@@ -66,16 +75,13 @@ hosting (equivalent to auto-approving every skill tool).
 
 Config is entirely env-driven so one image serves all three scenarios:
 
-  FOUNDRY_PROJECT_ENDPOINT         project endpoint
+  FSI_PROJECT_ENDPOINT             project endpoint (non-reserved; azd maps it from
+                                   the FOUNDRY_PROJECT_ENDPOINT azd env var)
   AZURE_AI_MODEL_DEPLOYMENT_NAME   e.g. gpt-5.4
   TOOLBOX_ENDPOINT                 full toolbox MCP URL (preferred), OR
   TOOLBOX_NAME                     toolbox name (endpoint built from project + name)
   STORAGE_BLOB_ENDPOINT            blob endpoint for artifact egress (optional locally)
   ARTIFACTS_CONTAINER              blob container name (default "artifacts")
-  SEC_EDGAR_MCP_URL                full URL of the self-hosted sec-edgar-mcp server (/mcp)
-  FSI_MCP_KEY                      shared secret the SEC MCP server expects
-  FSI_MCP_KEY_HEADER               header carrying the secret (default x-fsi-mcp-key)
-  SEC_EDGAR_DEEP_TOOLS             "true" to also allow slower full filing/statement tools
   FSI_SCENARIO_TITLE               human title for the system prompt
   FSI_SCENARIO_BRIEF               one-line description of the scenario's job
   FSI_STORE                        "true"/"false" response-store flag (default false)
@@ -129,9 +135,11 @@ logger = logging.getLogger("fsi.hosted")
 
 AI_SCOPE: Final = "https://ai.azure.com/.default"
 
-# Compact SEC EDGAR tool allow-list surfaced to the agent from the self-hosted
-# sec-edgar-mcp server. Kept small on purpose: broad/full filing extraction tools are
-# slow and token-heavy. Deep tools are added when SEC_EDGAR_DEEP_TOOLS=true.
+# Compact SEC EDGAR tools we steer the model toward first (via the system prompt).
+# Under the GA connection model the toolbox exposes the SEC MCP server's FULL tool set
+# (the preview per-scenario allow-list is gone), and Tool Search hides them all behind
+# tool_search/call_tool, so this list is now PROMPT GUIDANCE (preferred lightweight
+# tools) rather than an enforced allow-list. Namespaced sec-edgar___<tool>.
 SEC_EDGAR_COMPACT_TOOLS: Final = [
     "get_cik_by_ticker",
     "get_company_info",
@@ -140,22 +148,26 @@ SEC_EDGAR_COMPACT_TOOLS: Final = [
     "get_key_metrics",
     "compare_periods",
 ]
-SEC_EDGAR_DEEP_TOOLS: Final = [
-    "get_financials",
-    "get_filing_sections",
-    "get_company_facts",
-]
 
-# Every toolbox MCP request must carry this header or the endpoint rejects the call
-# ("Foundry-Features: Toolboxes=V1Preview"). FoundryToolbox's auth flow forwards the
-# platform per-request headers but does not statically set this one, so the runtime adds
-# it to the tools-toolbox HTTP client explicitly (belt-and-suspenders in the hosted env).
+# Every toolbox MCP request may carry this header. It was a mandatory preview gate; on
+# GA the endpoint no longer requires it, but setting it is harmless (belt-and-suspenders
+# for older gateway builds), so the runtime still adds it to the tools-toolbox client.
 TOOLBOX_FEATURES_HEADER: Final = ("Foundry-Features", "Toolboxes=V1Preview")
 
+# GA Tool Search meta-tools. Each scenario toolbox enables `toolbox_search_preview`
+# (named `tool_search`), so its MCP tools/list returns ONLY these two meta-tools; the
+# model reaches web + SEC EDGAR by calling tool_search (discovery) then call_tool
+# (invocation). The runtime's tools-toolbox is allow-listed to exactly these.
+TOOLBOX_SEARCH_TOOL: Final = "tool_search"
+TOOLBOX_CALL_TOOL: Final = "call_tool"
+
 # The web_search tool's name as bound in each scenario toolbox
-# (bind_skills_to_toolboxes.py -> {"type": "web_search", "name": "web"}). MCP-sourced
-# SEC tools are namespaced by the server_label with THREE underscores: sec_edgar___<tool>.
+# ({"type": "web_search", "name": "web"}). SEC EDGAR is a GA `remote-tool` project
+# CONNECTION named `sec-edgar`, so its MCP-sourced tools namespace with THREE
+# underscores off the connection name: sec-edgar___<tool> (dash, not underscore —
+# connection names may not contain underscores).
 TOOLBOX_WEB_TOOL: Final = "web"
+SEC_EDGAR_SERVER_LABEL: Final = "sec-edgar"
 
 DISCLAIMER: Final = (
     "All outputs are AI-generated for demonstration only using synthetic or "
@@ -184,10 +196,13 @@ def _system_prompt() -> str:
         f"You are the {title} agent for a financial-services demo. {brief}\n\n"
         "You have a governed library of specialist skills available through your "
         "toolbox via the load_skill tool (each skill's name and description is "
-        "listed for you). You also have a code_interpreter tool (a sandboxed Python "
-        "environment with openpyxl and python-pptx), governed SEC EDGAR tools "
-        "(named sec_edgar___* and routed through your toolbox) for public-company "
-        "filings and XBRL financials, and a web tool (web search) for broader "
+        "listed for you). You also have a native code_interpreter tool (a sandboxed "
+        "Python environment with openpyxl and python-pptx). For live external data your "
+        "toolbox uses GA Tool Search: instead of listing every tool, it gives you two "
+        "meta-tools — tool_search(query) to DISCOVER capabilities and "
+        "call_tool(name, arguments) to INVOKE a discovered tool. Behind them are "
+        "governed SEC EDGAR tools (named sec-edgar___* — note the dash) for public-"
+        "company filings and XBRL financials, and a web tool (name 'web') for broader "
         "grounding.\n\n"
         "Workflow for EVERY request:\n"
         "1. Decide which skill(s) apply and call load_skill to load their full "
@@ -197,23 +212,25 @@ def _system_prompt() -> str:
         "2. Follow the loaded skill's methodology precisely — especially "
         "formulas-over-hardcodes, step-by-step verification, and the specified "
         "Excel/PowerPoint formatting conventions.\n"
-        "3. For real public-company references, prefer the compact SEC EDGAR toolbox "
-        "tools over web search when you need company metadata, recent 10-K/10-Q/8-K "
-        "filing metadata, or selected XBRL metrics. Start with "
-        "sec_edgar___get_company_info and sec_edgar___get_recent_filings; use "
-        "sec_edgar___get_key_metrics only for a small set of named metrics. Avoid "
-        "broad/full filing extraction unless the user explicitly asks for filing "
-        "sections. Always cite the SEC URL, form type, and filing date returned by "
-        "the tool. Use the web tool only for market context not available from "
-        "filings.\n"
-        "4. Use the code_interpreter tool to build the actual .xlsx / .pptx "
+        "3. For real public-company references, use Tool Search to reach live data: "
+        "call tool_search with a short natural-language query (e.g. 'SEC company "
+        "info', 'recent 10-K filings', 'key financial metrics') to find the right tool, "
+        "then call_tool with its exact name and arguments. Prefer the compact SEC EDGAR "
+        "tools — sec-edgar___get_company_info and sec-edgar___get_recent_filings first, "
+        "then sec-edgar___get_key_metrics for a small set of named metrics. Avoid the "
+        "heavy full-filing / full-statement / insider tools unless the user explicitly "
+        "asks. Always cite the SEC URL, form type, and filing date returned by the tool. "
+        "Use the web tool (call_tool name 'web') only for market context not available "
+        "from filings.\n"
+        "4. Use the NATIVE code_interpreter tool to build the actual .xlsx / .pptx "
         "deliverable and save it under /mnt/data. Use real cell formulas, not "
-        "hardcoded values. If a loaded skill says to write a Python script and run it "
-        "with Bash or a local shell, adapt that step to code_interpreter Python; this "
-        "hosted runtime has code_interpreter, not a separate Bash tool. "
-        "Saving the file to /mnt/data is all that is required — the platform "
-        "automatically captures every file you write there and delivers it to the "
-        "portal for download. Do NOT merely invent or mention a sandbox:/mnt/data "
+        "hardcoded values. Do NOT call_tool a code_interpreter through the toolbox — "
+        "build deliverables with your native code_interpreter only. If a loaded skill "
+        "says to write a Python script and run it with Bash or a local shell, adapt that "
+        "step to code_interpreter Python; this hosted runtime has code_interpreter, not "
+        "a separate Bash tool. Saving the file to /mnt/data is all that is required — "
+        "the platform automatically captures every file you write there and delivers it "
+        "to the portal for download. Do NOT merely invent or mention a sandbox:/mnt/data "
         "link unless code_interpreter actually ran and saved the file. Do NOT "
         "base64-encode files, and do NOT paste file contents into your reply.\n"
         "5. Give a concise executive summary of what you built and the key figures. "
@@ -286,24 +303,18 @@ async def _prewarm_skills(provider) -> None:
 
 
 def _toolbox_tool_allowlist() -> set[str]:
-    """Toolbox tool names whose EXECUTION the runtime routes through the toolbox MCP.
+    """Toolbox tool names the runtime surfaces to the agent (GA Tool Search meta-tools).
 
-    We expose ``web_search`` (bound as ``web``) and the SEC EDGAR MCP tools
-    (namespaced ``sec_edgar___<tool>``) as client-side function tools off the scenario
-    toolbox, so their execution is governed by the toolbox — the single unified tool
-    surface. ``code_interpreter`` is deliberately EXCLUDED from this allow-list: the
-    preview toolbox-MCP ``code_interpreter`` returns a reproducible server-side ``500``
-    (verified live on this project, even with ``container: {type: auto}`` and the
-    ``Foundry-Features`` header), so it runs as the reliable Foundry-native hosted tool
-    instead. Excluding it here also prevents a name collision in which the broken
-    toolbox ``code_interpreter`` would shadow the working native one.
+    Each scenario toolbox enables Tool Search (``toolbox_search_preview``), so its MCP
+    ``tools/list`` returns ONLY ``tool_search`` + ``call_tool``; ``web`` and the full
+    ``sec-edgar___*`` set are hidden behind them. We therefore allow-list exactly the two
+    meta-tools: the model calls ``tool_search`` to discover a capability, then
+    ``call_tool`` (``{name, arguments}``) to invoke it, all routed over the governed
+    toolbox MCP endpoint. ``code_interpreter`` is not in the toolbox at all (it runs as
+    the Foundry-native hosted tool; see build_agent), so it can neither be discovered nor
+    shadow the native sandbox.
     """
-    allow: set[str] = {TOOLBOX_WEB_TOOL}
-    sec = list(SEC_EDGAR_COMPACT_TOOLS)
-    if _env_bool("SEC_EDGAR_DEEP_TOOLS", default=False):
-        sec += SEC_EDGAR_DEEP_TOOLS
-    allow.update(f"sec_edgar___{t}" for t in sec)
-    return allow
+    return {TOOLBOX_SEARCH_TOOL, TOOLBOX_CALL_TOOL}
 
 
 def build_agent(
@@ -318,7 +329,7 @@ def build_agent(
     execution) is placed in the agent's ``tools`` list and connected by the agent's own
     lifecycle — see the tools section below.
     """
-    endpoint = os.environ["FOUNDRY_PROJECT_ENDPOINT"]
+    endpoint = os.environ["FSI_PROJECT_ENDPOINT"]
     model = os.environ["AZURE_AI_MODEL_DEPLOYMENT_NAME"]
     cred = credential or DefaultAzureCredential()
     blob_endpoint = os.environ.get("STORAGE_BLOB_ENDPOINT")
@@ -342,15 +353,17 @@ def build_agent(
     skills_provider = skills_toolbox.as_skills_provider()
     _disable_skill_tool_approval(skills_provider)
 
-    # --- Toolbox connection #2: TOOL execution (web_search + SEC EDGAR) --------------
+    # --- Toolbox connection #2: TOOL execution via GA Tool Search --------------------
     # A SECOND connection to the SAME scenario toolbox, consumed as client-side function
-    # tools but restricted with allowed_tools to web_search (`web`) + the SEC EDGAR MCP
-    # tools (`sec_edgar___*`). This routes their EXECUTION through the governed toolbox,
-    # so the toolbox is the single unified, governed tool surface — not just a catalog.
-    # code_interpreter is EXCLUDED from the allow-list (preview toolbox CI 500s), so it
-    # keeps running as the Foundry-native hosted tool below, with no name collision.
+    # tools but restricted with allowed_tools to the Tool Search meta-tools
+    # (`tool_search` + `call_tool`). The toolbox enables `toolbox_search_preview`, so its
+    # tools/list returns ONLY those two; the model discovers web/SEC via tool_search and
+    # invokes them via call_tool, all routed over the governed toolbox MCP endpoint — the
+    # single unified, governed tool surface. code_interpreter is NOT in the toolbox at all
+    # (built natively below), so it can neither be discovered nor shadow the native tool.
     # FoundryToolbox does not accept allowed_tools, so we set it post-construction (it is
-    # read at connect/load_tools time). We also add the mandatory Foundry-Features header.
+    # read at connect/load_tools time). We also add the Foundry-Features header (harmless
+    # on GA; belt-and-suspenders for older gateway builds).
     tools_toolbox = FoundryToolbox(cred, token_scope=AI_SCOPE, load_tools=True)
     tools_toolbox.allowed_tools = _toolbox_tool_allowlist()
     try:
@@ -360,11 +373,11 @@ def build_agent(
     except Exception:  # noqa: BLE001 - defensive; platform may already inject it
         logger.warning("could not set Foundry-Features header on tools-toolbox client")
 
-    # Native code_interpreter builds the .xlsx/.pptx deliverables (the toolbox-MCP
-    # code_interpreter 500s in preview). web_search + SEC EDGAR execute THROUGH the
-    # toolbox (tools_toolbox). Placing tools_toolbox in `tools` makes the agent connect
-    # and manage its MCP session for the agent's lifetime; only web/sec are exposed
-    # (allow-list), so the native code_interpreter hosted tool is not shadowed.
+    # Native code_interpreter builds the .xlsx/.pptx deliverables (the toolbox omits CI
+    # entirely; artifact egress depends on the native sandbox container_id). web_search +
+    # SEC EDGAR execute THROUGH the toolbox (tools_toolbox) via Tool Search. Placing
+    # tools_toolbox in `tools` makes the agent connect and manage its MCP session for the
+    # agent's lifetime; only tool_search/call_tool are exposed (allow-list).
     tools: list = [
         tools_toolbox,
         client.get_code_interpreter_tool(),
@@ -373,10 +386,10 @@ def build_agent(
     agent = Agent(
         client=client,
         instructions=_system_prompt(),
-        # tools_toolbox routes web_search + SEC EDGAR through the governed toolbox;
-        # native code_interpreter builds the deliverables. The skills toolbox is NOT in
-        # this list (see main()): it is connected out-of-band so its skills are discovered
-        # without exposing a second, redundant tool surface.
+        # tools_toolbox routes web_search + SEC EDGAR through the governed toolbox via
+        # Tool Search; native code_interpreter builds the deliverables. The skills toolbox
+        # is NOT in this list (see main()): it is connected out-of-band so its skills are
+        # discovered without exposing a second, redundant tool surface.
         tools=tools,
         # Skills are consumed off the skills toolbox over MCP.
         context_providers=[skills_provider],

@@ -24,34 +24,38 @@ there is no bundled synthetic dataset — agents source figures live from SEC ED
 2. **Skills are governed Foundry skills**, registered centrally and bound to toolboxes -- never pasted
    into static agent prompts. The hosted runtime consumes them via
    `FoundryToolbox.as_skills_provider()` + `load_skill` (progressive disclosure over MCP).
-3. **Route tools through the toolbox; keep `code_interpreter` native.** `web_search` (bound as
-   `web`) and the SEC EDGAR MCP tool EXECUTE THROUGH each scenario toolbox: the runtime opens a
-   SECOND `FoundryToolbox` connection with `load_tools=True` and sets `.allowed_tools = {"web"} ∪
-   {sec_edgar___*}` post-construction, then puts it in the agent `tools` list. So the toolbox is
-   the single unified, governed, portal-visible tool surface -- not just a catalog.
-   `code_interpreter` is the ONE exception: it comes from `FoundryChatClient` (native) and is
-   EXCLUDED from the allow-list, because the preview toolbox-MCP `code_interpreter` returns a
-   reproducible server-side 500 (verified live) and would otherwise shadow the working native
-   tool. It is still listed in each toolbox catalog for a complete inventory. The skills path is
-   unchanged: a first `load_tools=False` toolbox consumed via `as_skills_provider()` + `load_skill`,
-   connected with `async with skills_toolbox:` in `main()`. Every toolbox MCP request must carry
-   the header `Foundry-Features: Toolboxes=V1Preview`.
+3. **Route tools through the toolbox via GA Tool Search; keep `code_interpreter` native.**
+   `web_search` (bound as `web`) and the SEC EDGAR tools EXECUTE THROUGH each scenario toolbox:
+   the runtime opens a SECOND `FoundryToolbox` connection with `load_tools=True` and sets
+   `.allowed_tools = {"tool_search", "call_tool"}` post-construction, then puts it in the agent
+   `tools` list. Each toolbox declares `toolbox_search_preview` (named `tool_search`), so its
+   `tools/list` returns ONLY the `tool_search` + `call_tool` meta-tools; `web` and `sec-edgar___*`
+   are DISCOVERED via `tool_search` and executed via `call_tool`, keeping model context flat as the
+   toolbox grows. So the toolbox is the single unified, governed, portal-visible tool surface.
+   `code_interpreter` is the ONE exception: it comes from `FoundryChatClient` (native) and is NOT
+   added to the toolbox, because `ArtifactEgressMiddleware` depends on the native sandbox
+   `container_id`, and the preview toolbox-MCP `code_interpreter` returns a reproducible 500;
+   keeping it out of the toolbox also stops the model discovering the broken tool via Tool Search.
+   The skills path is unchanged: a first `load_tools=False` toolbox consumed via
+   `as_skills_provider()` + `load_skill`, connected with `async with skills_toolbox:` in `main()`
+   (skills still surface as MCP resources even with Tool Search on). The preview
+   `Foundry-Features: Toolboxes=V1Preview` header is no longer required on GA (harmless if present).
 4. **SEC EDGAR is a self-hosted REMOTE MCP tool**, not in-container code. `stefanoamorelli/sec-edgar-mcp`
-   runs as its own Container App (built from `agents/mcp/sec-edgar`); it is registered in each
-   scenario toolbox as an `mcp` tool and EXECUTED THROUGH the toolbox (namespaced `sec_edgar___*`,
-   see principle 3). The Foundry gateway injects a shared-secret header (`x-fsi-mcp-key`).
-   Toggle it with the `SEC_EDGAR_MCP_URL` azd env var. Upstream license is AGPL-3.0.
+   runs as its own Container App (built from `agents/mcp/sec-edgar`) and is registered as a GA
+   Foundry **project connection** (`azd ai connection create sec-edgar --kind remote-tool
+   --auth-type custom-keys`), then attached to each scenario toolbox's `connections`. It is EXECUTED
+   THROUGH the toolbox (namespaced `sec-edgar___*` — a DASH, because connection names disallow
+   underscores). The Foundry gateway injects a shared-secret header (`x-fsi-mcp-key`). Toggle it
+   with the `SEC_EDGAR_MCP_URL` azd env var. Upstream license is AGPL-3.0.
 
 ## Repository map
 
 | Path | Purpose |
 |---|---|
 | `infra/main.bicep` (+ `infra/modules/*`) | Subscription-scoped IaC: RG, Foundry account/project, models, ACR, Storage, Key Vault, App Insights, Container Apps env, RBAC, and API/portal env wiring. |
-| `deploy.ps1` | Top-level one-command orchestrator (provision -> skills/toolboxes -> SEC EDGAR -> agents -> RBAC -> api/portal -> validate). `-Skip*` switches for partial re-runs. |
-| `scripts/*.ps1` | Deploy helpers: `set_azd_env_from_infra.ps1`, `grant_agent_rbac.ps1`, `deploy_sec_edgar.ps1`. |
-| `agents/scripts/provision_skills.py` | Register each skill as a Foundry skill. Skill content is fetched at runtime from a pinned Anthropic commit (`ANTHROPIC_SKILLS_REF`), not stored in-repo. |
-| `agents/scripts/create_toolboxes.py` / `bind_skills_to_toolboxes.py` | Create the 3 scenario toolboxes and bind + promote skill references. |
-| `agents/scripts/_common.py` | Shared `require_project_endpoint()` (fail-fast, no hardcoded default). |
+| `deploy.ps1` | Top-level one-command orchestrator (provision infra -> SEC EDGAR -> map azd env -> skills/connection/toolboxes -> agents -> RBAC -> storage -> api/portal -> validate). `-Skip*` switches for partial re-runs. |
+| `scripts/*.ps1` | Deploy helpers: `deploy_sec_edgar.ps1`, `set_azd_env_from_infra.ps1`, `provision_foundry.ps1` (declarative `azd ai` skills + SEC connection + toolboxes), `grant_agent_rbac.ps1`, `ensure_storage_public.ps1`. |
+| `scripts/provision_foundry.ps1` | Declarative provisioning: `azd ai skill create` per skill (content fetched at runtime from a pinned Anthropic commit, `-SkillsRef`), `azd ai connection create` for the SEC EDGAR remote-tool connection, and `azd ai toolbox create --from-file` + `publish` for the 3 scenario toolboxes. Replaces the retired REST scripts. |
 | `agents/hosted/fsi_hosted_agent.py` | The single env-driven hosted-agent runtime for all 3 scenarios. |
 | `agents/hosted/fsi_artifact_egress.py` | `ArtifactEgressMiddleware`: harvests Code Interpreter files and uploads them to the private `artifacts` blob container, appending a `<<<ARTIFACT ...>>>` sentinel. |
 | `agents/hosted/_azd/` | `azd ai agent` project. `azure.yaml` declares the 3 services; `agent-src/` is the deployed copy of the runtime. |
@@ -79,15 +83,16 @@ this ordered flow (each step also has a documented manual equivalent in the runb
    ```
    A distinct `<env>` gives a fully isolated deployment (RG `rg-<env>`, all resources named
    off it).
-3. **Register skills + toolboxes** against the new project:
-   `provision_skills.py` -> `create_toolboxes.py` -> `bind_skills_to_toolboxes.py` (also
-   promotes the default toolbox version — the MCP endpoint serves the default version).
-4. **(Optional) Deploy the SEC EDGAR MCP Container App** from `agents/mcp/sec-edgar`
+3. **(Optional) Deploy the SEC EDGAR MCP Container App** from `agents/mcp/sec-edgar`
    (`scripts/deploy_sec_edgar.ps1`), then set `SEC_EDGAR_MCP_URL` / `FSI_MCP_KEY`.
-5. **Map infra outputs into the azd agent env** (`scripts/set_azd_env_from_infra.ps1`).
+4. **Map infra outputs into the azd agent env** (`scripts/set_azd_env_from_infra.ps1`).
+5. **Provision skills + SEC connection + toolboxes declaratively** against the new project via
+   `scripts/provision_foundry.ps1`: `azd ai skill create` per skill, `azd ai connection create`
+   for the SEC EDGAR remote-tool connection, `azd ai toolbox create --from-file` + `publish`
+   (publish promotes the default version — the MCP endpoint serves the default version).
 6. **Deploy the 3 hosted agents** from `agents/hosted/_azd` (see command below).
 7. **Grant hosted-agent instance-identity RBAC** (`scripts/grant_agent_rbac.ps1`) and
-   **verify storage networking** (see gotchas).
+   **verify storage networking** (`scripts/ensure_storage_public.ps1`; see gotchas).
 8. **Build + deploy API and portal images** (`fsi-api`, `fsi-portal`; bake the API URL into
    the portal build). API env vars come from infra outputs.
 9. **Validate** (`scripts/validate.py`) and drive the browser portal path.
@@ -120,7 +125,7 @@ azd deploy fsi-pe-lbo -e <env>
   already hold the role). Keep `publicNetworkAccess=Enabled` (`infra/modules/storage.bicep` sets
   this explicitly) or add private endpoints for both. **A subscription Azure Policy can flip it back
   to `Disabled` after deploy** (minutes to hours later), silently breaking every artifact download;
-  `deploy.ps1` re-asserts it at step 1 and step 7b, and you can repair it any time with
+  `deploy.ps1` re-asserts it at step 1 and step 7, and you can repair it any time with
   `az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow`
   or a policy exemption. RBAC alone is not sufficient.
 - **Always sync the runtime into `_azd/agent-src` before `azd deploy`.** The source of truth is
@@ -128,9 +133,11 @@ azd deploy fsi-pe-lbo -e <env>
   `Get-FileHash`. Deploying a stale copy silently ships old behavior.
 - **Two toolbox connections; `code_interpreter` stays native.** The *skills* toolbox
   (`load_tools=False`, `as_skills_provider()`) is connected via `async with skills_toolbox:` in
-  `main()`. The *tools* toolbox (`load_tools=True`, `.allowed_tools = {"web"} ∪ {sec_edgar___*}`)
-  goes in the agent `tools` list and routes web_search + SEC EDGAR through the toolbox. Do NOT add
-  `code_interpreter` to the allow-list — the preview toolbox CI 500s; run it natively via
+  `main()`. The *tools* toolbox (`load_tools=True`, `.allowed_tools = {"tool_search", "call_tool"}`)
+  goes in the agent `tools` list and routes web_search + SEC EDGAR through the toolbox's GA Tool
+  Search (`web` + `sec-edgar___*` are discovered via `tool_search` and run via `call_tool`). Do NOT
+  add `code_interpreter` to the toolbox — the preview toolbox CI 500s and the native sandbox
+  `container_id` is required by artifact egress; run it natively via
   `FoundryChatClient.get_code_interpreter_tool()`.
 - **Invoke hosted agents with Responses background mode + poll**, not plain `stream=false`. Plain
   non-streaming holds the connection open and the Foundry gateway disconnects on long Code

@@ -85,14 +85,11 @@ supporting `.pptx` deck and `.xlsx` model as download buttons.*
   > works; `deploy.ps1` accepts either packaging.
 - `az login` to the target subscription. If you have more than one subscription, either
   `az account set --subscription <id>` first or pass `-SubscriptionId <id>` to `deploy.ps1`.
-- Python deps for the provisioning scripts (pinned):
-  ```powershell
-  pip install -r agents/scripts/requirements.txt
-  ```
 
-> `deploy.ps1` preflights these: it fails fast with the exact fix command if the
-> Foundry azd extension or the Python deps are missing, **before** provisioning any
-> billable infra.
+> `deploy.ps1` preflights the Foundry `azd ai` extensions and fails fast with the exact
+> install command if they are missing, **before** provisioning any billable infra. Skills,
+> the SEC EDGAR connection, and the toolboxes are provisioned declaratively with `azd ai`
+> (`scripts/provision_foundry.ps1`) — no Python provisioning dependencies are required.
 
 ### Deploy
 
@@ -214,9 +211,10 @@ flowchart LR
    invokes the scenario's hosted agent over the Foundry **Responses** protocol in
    **background mode** (`stream:false, store:true, background:true`), then polls until
    complete — this avoids gateway disconnects on long Code Interpreter work.
-4. The hosted agent loads only the skills it needs from its toolbox over MCP, runs
-   `web_search` and (optionally) SEC EDGAR filing tools **through the same governed
-   toolbox**, then builds the deliverable with native `code_interpreter`.
+4. The hosted agent loads only the skills it needs from its toolbox over MCP, then discovers and
+   runs `web_search` and (optionally) SEC EDGAR filing tools **through the same governed
+   toolbox** via GA Tool Search (`tool_search` + `call_tool`), and builds the deliverable with
+   native `code_interpreter`.
 5. The agent's `ArtifactEgressMiddleware` uploads generated files to the private
    `artifacts` Blob container and appends a sentinel
    `<<<ARTIFACT name=<file> blob=<container>/<path>>>>` to the response text.
@@ -232,15 +230,18 @@ flowchart LR
 2. **Skills are governed Foundry skills**, registered centrally from a pinned Anthropic
    commit and bound to toolboxes — never pasted into static prompts. The runtime consumes
    them via `FoundryToolbox.as_skills_provider()` + `load_skill`.
-3. **Route tools through the toolbox; keep `code_interpreter` native.** `web_search` and the
-   SEC EDGAR MCP tool execute **through** each scenario toolbox — at runtime the agent opens
-   a `load_tools=True` toolbox connection with an `allowed_tools` allow-list, so the toolbox
-   is the single, unified, governed tool surface, not just a catalog. `code_interpreter` is
-   the one exception: the preview toolbox Code Interpreter returns server-side 500s, so it is
-   excluded from the allow-list and executed as the reliable Foundry-native hosted tool. It
-   is still listed in each toolbox catalog for a complete, portal-visible inventory.
+3. **Route tools through the toolbox via GA Tool Search; keep `code_interpreter` native.**
+   `web_search` and the SEC EDGAR tools execute **through** each scenario toolbox — at runtime the
+   agent opens a `load_tools=True` toolbox connection whose allow-list is the GA Tool Search
+   meta-tools (`tool_search` + `call_tool`). Each toolbox declares `toolbox_search_preview`, so the
+   model discovers `web` and the full SEC EDGAR tool set with `tool_search` and runs them with
+   `call_tool`, keeping context flat as the toolbox grows. The toolbox is the single, unified,
+   governed tool surface. `code_interpreter` is the one exception: the preview toolbox Code
+   Interpreter returns server-side 500s and artifact egress needs the native sandbox container, so
+   CI runs as the Foundry-native hosted tool and is intentionally **not** added to the toolbox.
 4. **SEC EDGAR is a self-hosted remote MCP tool**, not in-container code. It runs as its own
-   Container App and is attached as a Foundry-native remote MCP tool; the gateway injects a
+   Container App and is registered as a governed Foundry **project connection**
+   (`kind remote-tool`, custom-key header auth) attached to each toolbox; the gateway injects a
    shared-secret header, so the endpoint is unusable without the key.
 5. **Keep artifact storage network-reachable.** Blob egress uses AAD/RBAC over the public
    endpoint (`allowSharedKeyAccess=false`, no anonymous access). Keep
@@ -291,12 +292,12 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 
 ## Reusing this pattern for your own skills
 
-1. **Pin the upstream skill source.** `agents/scripts/provision_skills.py` fetches each
-   `SKILL.md` from a pinned commit of the Anthropic repo (`ANTHROPIC_SKILLS_REF`). Point it
-   at your own skill catalog and adjust the `RUNTIME_SKILLS` list.
-2. **Map skills to scenarios.** Edit the toolbox → skill bindings in
-   `agents/scripts/bind_skills_to_toolboxes.py` and the scenario metadata in
-   `api/app/config.py`.
+1. **Pin the upstream skill source.** `scripts/provision_foundry.ps1` fetches each `SKILL.md`
+   from a pinned commit of the Anthropic repo (`-SkillsRef`, default `ANTHROPIC_SKILLS_REF`) and
+   registers it with `azd ai skill create`. Point it at your own skill catalog and adjust the
+   `$Skills` list.
+2. **Map skills to scenarios.** Edit the per-toolbox `skills` lists in the `$Toolboxes`
+   definition in `scripts/provision_foundry.ps1` and the scenario metadata in `api/app/config.py`.
 3. **Add scenarios or change models** via `agents/hosted/_azd/azure.yaml` (one service per
    scenario, env-driven) and the `agentModelDeploymentName` parameter in `infra/main.bicep`.
 4. **Connect live vendor data** by registering vendor MCP tools in the Foundry project and

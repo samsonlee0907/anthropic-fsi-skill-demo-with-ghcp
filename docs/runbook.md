@@ -44,13 +44,14 @@ mandate to target any public ticker.
   East US 2 is the tested default. Some regions (observed: Sweden Central) can have model quota but
   be out of Container Apps managed-environment capacity (`ManagedEnvironmentCapacityHeavyUsageError`)
   — switch regions if you hit that at the infra step.
-- `az`, `azd` (with the Foundry extension — install the GA unified bundle with
-  `azd ext install microsoft.foundry`, or the legacy `azd extension install azure.ai.agents`;
+- `az`, `azd` (with the Foundry extensions — install the GA unified bundle with
+  `azd ext install microsoft.foundry`, or the legacy individual betas
+  `azd extension install azure.ai.agents azure.ai.skills azure.ai.connections azure.ai.toolboxes`;
   either works, verify with `azd ai agent --help`),
-  `gh` (authenticated), Python 3.11+.
-- `az login`; `pip install -r agents/scripts/requirements.txt` (pinned deps for the
-  provisioning scripts). Multi-subscription users: `az account set --subscription <id>`
-  or pass `-SubscriptionId <id>` to `deploy.ps1`.
+  `gh` (authenticated), Python 3.11+ (for the API/portal builds and `scripts/validate.py`).
+- `az login`. Skills, the SEC connection and the toolboxes are provisioned declaratively with
+  `azd ai` (`scripts/provision_foundry.ps1`) — no Python provisioning dependencies. Multi-subscription
+  users: `az account set --subscription <id>` or pass `-SubscriptionId <id>` to `deploy.ps1`.
 - `deploy.ps1` resolves your object ID through a fallback chain: `-PrincipalId` if you pass it,
   then `az ad signed-in-user show`, then the `oid` claim decoded from the ARM access token.
   The last step covers **Conditional Access / CAE** tenants where a token challenge
@@ -74,34 +75,32 @@ mandate to target any public ticker.
                   developerPrincipalId=<your-object-id> `
                   agentModelDeploymentName=gpt-5.4
    ```
-2. **Register skills + create toolboxes** against the new project (uses `PROJECT_ENDPOINT`
-   from the infra `AZURE_AI_PROJECT_ENDPOINT` output):
-   ```powershell
-   $env:PROJECT_ENDPOINT = "<AZURE_AI_PROJECT_ENDPOINT>"
-   python agents/scripts/provision_skills.py
-   python agents/scripts/create_toolboxes.py
-   ```
-3. **(Optional) Deploy the SEC EDGAR MCP** Container App and generate its shared secret:
+2. **(Optional) Deploy the SEC EDGAR MCP** Container App and generate its shared secret:
    ```powershell
    ./scripts/deploy_sec_edgar.ps1 -ResourceGroup rg-<env> -RegistryName acr<token> `
      -UserAssignedIdentityId <AZURE_MANAGED_IDENTITY_ID> `
      -SecEdgarUserAgent "Your Name (you@example.com)" -FsiMcpKey <generated-secret>
    ```
-4. **Bind skills (+ SEC tool) to toolboxes** and promote the default version (the MCP
-   endpoint serves the default version):
-   ```powershell
-   # With SEC_EDGAR_MCP_URL / FSI_MCP_KEY set if SEC EDGAR is enabled:
-   python agents/scripts/bind_skills_to_toolboxes.py
-   ```
-5. **Map infra outputs into the azd agent environment**:
+3. **Map infra outputs into the azd agent environment** (seeds `FOUNDRY_PROJECT_ENDPOINT`, the
+   derived `TOOLBOX_ENDPOINT_*`, `SEC_EDGAR_MCP_URL` / `FSI_MCP_KEY`):
    ```powershell
    ./scripts/set_azd_env_from_infra.ps1 -ProjectEndpoint <...> -StorageBlobEndpoint <...> `
      -ModelDeploymentName gpt-5.4 -EnvName <env>
    ```
-6. **Deploy the 3 hosted agents** (see §4).
-7. **Grant agent instance-identity RBAC** (see §5).
-8. **Build + deploy API and portal** images (see §6).
-9. **Validate** all three scenarios (see §7).
+4. **Provision skills + SEC connection + toolboxes declaratively** with `azd ai` (GA):
+   ```powershell
+   # Reads the azd env seeded in step 3 (FOUNDRY_PROJECT_ENDPOINT + SEC_EDGAR_MCP_URL/FSI_MCP_KEY):
+   ./scripts/provision_foundry.ps1 -EnvName <env> -AzdDir agents/hosted/_azd
+   ```
+   This runs `azd ai skill create` for each of the 12 skills (content fetched from the pinned
+   Anthropic commit `-SkillsRef`), `azd ai connection create sec-edgar --kind remote-tool
+   --auth-type custom-keys` (only when `SEC_EDGAR_MCP_URL` is set), and
+   `azd ai toolbox create --from-file <toolbox>.json` + `azd ai toolbox publish` for each of the 3
+   scenario toolboxes (publish promotes the default version — the MCP endpoint serves the default).
+5. **Deploy the 3 hosted agents** (see §4).
+6. **Grant agent instance-identity RBAC** (see §5).
+7. **Build + deploy API and portal** images (see §6).
+8. **Validate** all three scenarios (see §7).
 
 ## 4. Deploy / redeploy the hosted agents
 
@@ -332,39 +331,37 @@ The scenarios already source real financials from **SEC EDGAR** (self-hosted MCP
 | Transcripts and news | Aiera, MT Newswire |
 | Source documents | Box, Egnyte |
 
-### GA toolbox alignment & recommended enhancements
+### GA toolbox alignment
 
 Foundry **toolbox is GA** (see the [toolbox how-to](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/toolbox?pivots=python)).
-This asset already matches the GA contract: the MCP **consumer** endpoint
+This asset is provisioned and consumed through the GA contract: the MCP **consumer** endpoint
 (`{project_endpoint}/toolboxes/{name}/mcp?api-version=v1`, always serving the promoted default
-version), the `https://ai.azure.com/.default` auth scope, and `{server_label}___{tool_name}`
-(three underscores) MCP tool naming — which is why the runtime's allow-list keys off
-`sec_edgar___*`. The following are safe, GA-era improvements to adopt when you next iterate;
-each changes runtime behavior, so validate with `scripts/validate.py` after applying:
+version), the `https://ai.azure.com/.default` auth scope, and `{server_label}___{tool_name}` MCP
+tool naming. The following GA capabilities are already adopted (validate any change with
+`scripts/validate.py`, which exercises all three scenarios):
 
-1. **Enable Tool Search on large toolboxes.** Add a `{ "type": "toolbox_search_preview" }`
-   entry to each toolbox spec in `agents/scripts/create_toolboxes.py`. It swaps the full
-   `tools/list` for `tool_search` + `call_tool` meta-tools, so model context stays flat as a
-   toolbox grows past ~5 tools (each scenario toolbox already bundles ~12 skills + web + SEC
-   EDGAR + code interpreter). It does **not** count toward the one-unnamed-tool-per-type limit.
-   Update the agent instructions to call `tool_search` when a needed capability isn't visible.
-   See [Tool Search](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/tool-search).
-2. **Move to declarative provisioning.** GA `azd ai skill create` +
-   `azd ai toolbox create --from-file <toolbox>.yaml` (unified `microsoft.foundry` bundle) can
-   replace the REST-based `provision_skills.py` / `create_toolboxes.py` /
-   `bind_skills_to_toolboxes.py` scripts. The toolbox YAML references connections, tools,
-   `skills`, and `policies` by name with no embedded credentials. This removes the preview-era
-   `Foundry-Features: Toolboxes=V1Preview` header workaround those scripts carry (GA clients and
-   the GA smoke tests no longer send that header; it is currently harmless but no longer
-   required).
-3. **Re-test toolbox-native `code_interpreter`.** The runtime runs Code Interpreter natively
-   (via `FoundryChatClient`) to dodge a preview-only toolbox-CI `500`. GA lists CI as a
-   supported toolbox tool, so re-test routing it through the toolbox; if it works you can drop
-   the native-CI special case and the allow-list exclusion.
-4. **Avoid `FOUNDRY_`-prefixed custom env vars.** The platform reserves the `FOUNDRY_` prefix
-   and may overwrite such vars at runtime. The agent currently reads `FOUNDRY_PROJECT_ENDPOINT`
-   (injected via `azure.yaml`); if you add your own endpoint/config vars, prefer unprefixed
-   names like `TOOLBOX_ENDPOINT` / `PROJECT_ENDPOINT`.
+1. **Tool Search is enabled on every toolbox.** Each toolbox declares
+   `{ "type": "toolbox_search_preview", "name": "tool_search" }`, so its `tools/list` returns only
+   the `tool_search` + `call_tool` meta-tools; `web` and `sec-edgar___*` (the full ~15-tool SEC set)
+   are discovered via `tool_search` and executed via `call_tool`, keeping model context flat as a
+   toolbox grows. The runtime's allow-list is therefore `{tool_search, call_tool}` and the agent
+   instructions tell the model to search for a capability before using it. See
+   [Tool Search](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/tools/tool-search).
+2. **Provisioning is declarative** via `scripts/provision_foundry.ps1`: `azd ai skill create`,
+   `azd ai connection create sec-edgar --kind remote-tool --auth-type custom-keys` (preserves our
+   self-hosted SEC EDGAR MCP + shared-secret header auth as a governed project connection), and
+   `azd ai toolbox create --from-file` + `azd ai toolbox publish`. The generated toolbox spec
+   references `connections`, `tools`, and `skills` by name with no embedded credentials. This
+   retired the REST-based provisioning scripts and the preview-era
+   `Foundry-Features: Toolboxes=V1Preview` header workaround (no longer required on GA).
+3. **`code_interpreter` stays native, not in the toolbox.** The runtime runs Code Interpreter via
+   `FoundryChatClient` — `ArtifactEgressMiddleware` depends on the native sandbox `container_id`,
+   and the preview toolbox-CI still `500`s. Keeping CI out of the toolbox also stops the model
+   discovering the broken tool through Tool Search.
+4. **No `FOUNDRY_`-prefixed custom container env vars.** The platform reserves the `FOUNDRY_`
+   prefix and may overwrite such vars at runtime, so the container runtime reads
+   `FSI_PROJECT_ENDPOINT` (mapped from the azd-side `FOUNDRY_PROJECT_ENDPOINT` in `azure.yaml`).
+   Keep your own endpoint/config vars unprefixed.
 
 > **RBAC (GA):** the GA toolbox prerequisites ask for the **Foundry User** role on the Foundry
 > *project* for every identity that touches a toolbox (developer, hosted-agent identity, and —

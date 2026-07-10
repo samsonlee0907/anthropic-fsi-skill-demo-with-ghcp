@@ -9,13 +9,14 @@
       1. Provision infra (subscription-scoped bicep): RG, Foundry account/project +
          model deployments, ACR, Storage, Key Vault, App Insights, Container Apps,
          app-identity RBAC.
-      2. Register the Anthropic skills as Foundry skills and create the 3 scenario
-         toolboxes.
-      3. (optional) Deploy the SEC EDGAR MCP Container App and generate its secret.
-      4. Bind skills (+ SEC tool) to the toolboxes and promote the default version.
-      5. Map infra outputs into the azd agent environment.
-      6. Deploy the 3 hosted agents (azd).
-      7. Grant each agent's instance identity the RBAC it needs.
+      2. (optional) Deploy the SEC EDGAR MCP Container App and generate its secret.
+      3. Map infra outputs into the azd agent environment.
+      4. Declaratively provision Foundry: register the Anthropic skills, the SEC
+         EDGAR remote-tool connection, and the 3 scenario toolboxes (with GA Tool
+         Search) — all via the `azd ai` extensions.
+      5. Deploy the 3 hosted agents (azd).
+      6. Grant each agent's instance identity the RBAC it needs.
+      7. Re-assert storage public network access.
       8. Build + deploy the API and portal container images.
       9. Validate all three scenarios end-to-end.
 
@@ -129,13 +130,18 @@ function Invoke-AcrBuild {
 Write-Host "== Preflight ==" -ForegroundColor Cyan
 'az', 'azd', 'python', 'gh' | ForEach-Object { Require-Tool $_ }
 
-# Fail fast if the provisioning scripts' Python deps are missing. Without this the run
-# provisions (and bills) infra in step 1, then dies with a bare ModuleNotFoundError in
-# step 2. Point the user straight at the pinned requirements file instead.
+# Fail fast if the declarative Foundry provisioning would run without the azd `ai`
+# extensions it depends on (skills / connections / toolboxes). Without this the run
+# provisions (and bills) infra in step 1, then dies later when `azd ai skill` is not
+# found. Point the user straight at the install command instead.
 if (-not $SkipSkills) {
-    python -c "import azure.ai.projects, azure.identity" 2>$null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Missing Python dependencies for the provisioning scripts. Run: pip install -r agents/scripts/requirements.txt"
+    $aiExt = azd extension list --installed 2>$null | Out-String
+    $missing = @()
+    foreach ($id in 'azure.ai.skills', 'azure.ai.connections', 'azure.ai.toolboxes') {
+        if ($aiExt -notmatch [regex]::Escape($id)) { $missing += $id }
+    }
+    if ($missing.Count) {
+        throw "Missing azd Foundry extensions for declarative provisioning: $($missing -join ', '). Install with: azd extension install $($missing -join ' ')  (or 'azd ext install microsoft.foundry')."
     }
 }
 
@@ -163,7 +169,10 @@ Find your object id with:  az ad signed-in-user show --query id -o tsv
 "@
     }
 }
-az config set auth.useAzCliAuth true 2>$null | Out-Null
+# Make azd delegate token acquisition to the az CLI, so `azd ai *` and `azd deploy` use the
+# same identity as `az login` (no separate `azd auth login` needed). This is an *azd* config
+# key -- writing it to `az` (as an earlier revision did) is a silent no-op.
+azd config set auth.useAzCliAuth true 2>$null | Out-Null
 
 # ---------------------------------------------------------------------------
 # 1. Infra
@@ -214,24 +223,14 @@ if (-not $SkipInfra) {
 }
 
 # ---------------------------------------------------------------------------
-# 2. Register skills + create toolboxes
-# ---------------------------------------------------------------------------
-if (-not $SkipSkills) {
-    Write-Host "== 2. Registering skills + toolboxes ==" -ForegroundColor Cyan
-    python (Join-Path $repo 'agents\scripts\provision_skills.py')
-    Assert-LastExit "Skill registration (provision_skills.py)"
-    python (Join-Path $repo 'agents\scripts\create_toolboxes.py')
-    Assert-LastExit "Toolbox creation (create_toolboxes.py)"
-}
-
-# ---------------------------------------------------------------------------
-# 3. (optional) SEC EDGAR MCP
+# 2. (optional) SEC EDGAR MCP -- deploy first so its URL + secret can be mapped
+#    into the azd environment and registered as a governed connection below.
 # ---------------------------------------------------------------------------
 $secMcpUrl = ''
 $fsiMcpKey = ''
 if ($SecEdgarUserAgent -and -not $SkipSecEdgar) {
-    Write-Host "== 3. Deploying SEC EDGAR MCP ==" -ForegroundColor Cyan
-    # Generate the shared secret up front so both the MCP app and the agents use it.
+    Write-Host "== 2. Deploying SEC EDGAR MCP ==" -ForegroundColor Cyan
+    # Generate the shared secret up front so both the MCP app and the connection use it.
     $bytes = New-Object 'System.Byte[]' 32
     [System.Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
     $fsiMcpKey = [Convert]::ToBase64String($bytes).Replace('+', '-').Replace('/', '_').TrimEnd('=')
@@ -241,37 +240,47 @@ if ($SecEdgarUserAgent -and -not $SkipSecEdgar) {
     $env:SEC_EDGAR_MCP_URL = $secMcpUrl
     $env:FSI_MCP_KEY = $fsiMcpKey
 } else {
-    Write-Host "== 3. Skipping SEC EDGAR MCP (no -SecEdgarUserAgent) ==" -ForegroundColor DarkGray
+    Write-Host "== 2. Skipping SEC EDGAR MCP (no -SecEdgarUserAgent) ==" -ForegroundColor DarkGray
 }
 
 # ---------------------------------------------------------------------------
-# 4. Bind skills (+ SEC tool) to toolboxes and promote the default version
+# 3. Map infra outputs into the azd agent environment (creates the env used by
+#    both the declarative provisioning below and `azd deploy`).
 # ---------------------------------------------------------------------------
-if (-not $SkipSkills) {
-    Write-Host "== 4. Binding skills to toolboxes ==" -ForegroundColor Cyan
-    python (Join-Path $repo 'agents\scripts\bind_skills_to_toolboxes.py')
-    Assert-LastExit "Skill-to-toolbox binding (bind_skills_to_toolboxes.py)"
-}
-
-# ---------------------------------------------------------------------------
-# 5. Map infra outputs into the azd agent environment
-# ---------------------------------------------------------------------------
-Write-Host "== 5. Configuring azd agent environment ==" -ForegroundColor Cyan
+Write-Host "== 3. Configuring azd agent environment ==" -ForegroundColor Cyan
 $fsiMcpKey = & (Join-Path $repo 'scripts\set_azd_env_from_infra.ps1') `
     -ProjectEndpoint $projectEndpoint -StorageBlobEndpoint $storageBlob `
     -ProjectId $projectId `
     -ModelDeploymentName $ModelDeploymentName -SecEdgarMcpUrl $secMcpUrl `
     -FsiMcpKey $fsiMcpKey -EnvName $EnvName -AzdDir $azdDir | Select-Object -Last 1
 Push-Location $azdDir
-azd env set AZURE_SUBSCRIPTION_ID (az account show --query id -o tsv) | Out-Null
+$azSub = az account show --query id -o tsv 2>$null
+azd env set AZURE_SUBSCRIPTION_ID $azSub | Out-Null
 azd env set AZURE_LOCATION $Location | Out-Null
 Pop-Location
 
+# Align azd's DEFAULT subscription with the active az context. The `azd ai`
+# extensions mint Azure tokens via a delegated-credential subprocess; if azd's
+# default subscription is stale (points at a subscription the signed-in az session
+# cannot see) that subprocess fails with "Subscription not found" surfaced as
+# `AzureDeveloperCLICredential: exit status 1`, which blocks all `azd ai` commands.
+if ($azSub) { azd config set defaults.subscription $azSub 2>$null | Out-Null }
+
 # ---------------------------------------------------------------------------
-# 6. Deploy the 3 hosted agents
+# 4. Declaratively provision Foundry: skills + SEC connection + toolboxes.
+# ---------------------------------------------------------------------------
+if (-not $SkipSkills) {
+    Write-Host "== 4. Provisioning Foundry skills + connection + toolboxes ==" -ForegroundColor Cyan
+    & (Join-Path $repo 'scripts\provision_foundry.ps1') `
+        -EnvName $EnvName -AzdDir $azdDir `
+        -SecEdgarMcpUrl $secMcpUrl -FsiMcpKey $fsiMcpKey
+}
+
+# ---------------------------------------------------------------------------
+# 5. Deploy the 3 hosted agents
 # ---------------------------------------------------------------------------
 if (-not $SkipAgents) {
-    Write-Host "== 6. Deploying hosted agents ==" -ForegroundColor Cyan
+    Write-Host "== 5. Deploying hosted agents ==" -ForegroundColor Cyan
     # Sync runtime source into the azd agent-src copy (critical: stale copies ship old behavior).
     Copy-Item (Join-Path $hostedDir 'fsi_hosted_agent.py') (Join-Path $azdDir 'agent-src\fsi_hosted_agent.py') -Force
     Copy-Item (Join-Path $hostedDir 'fsi_artifact_egress.py') (Join-Path $azdDir 'agent-src\fsi_artifact_egress.py') -Force
@@ -294,15 +303,15 @@ if (-not $SkipAgents) {
         }
     } finally { Pop-Location }
 
-    # 7. Grant agent instance-identity RBAC (identities exist only after deploy).
-    Write-Host "== 7. Granting agent RBAC ==" -ForegroundColor Cyan
+    # 6. Grant agent instance-identity RBAC (identities exist only after deploy).
+    Write-Host "== 6. Granting agent RBAC ==" -ForegroundColor Cyan
     & (Join-Path $repo 'scripts\grant_agent_rbac.ps1') `
         -ResourceGroup $rg -AiAccountName $aiAccount -StorageAccountName $storageAccount `
         -ProjectEndpoint $projectEndpoint -AgentNames @('fsi-equity', 'fsi-ib-pitch', 'fsi-pe-lbo')
 }
 
 # ---------------------------------------------------------------------------
-# 7b. Ensure storage stays network-reachable (runs on every invocation).
+# 7. Ensure storage stays network-reachable (runs on every invocation).
 # A subscription Azure Policy can flip publicNetworkAccess back to Disabled AFTER the
 # bicep sets it Enabled. When that happens the hosted-agent compute and the VNet-less
 # Container Apps BFF can no longer reach Blob Storage, and artifact upload fails with
@@ -312,7 +321,7 @@ if (-not $SkipAgents) {
 # succeeds but the value stays Disabled), so it self-heals with a scoped Waiver
 # exemption. (Data stays protected by Entra ID RBAC only; shared-key + anonymous off.)
 # ---------------------------------------------------------------------------
-Write-Host "== 7b. Ensuring storage public network access ==" -ForegroundColor Cyan
+Write-Host "== 7. Ensuring storage public network access ==" -ForegroundColor Cyan
 & (Join-Path $repo 'scripts\ensure_storage_public.ps1') -ResourceGroup $rg -StorageAccountName $storageAccount
 
 # ---------------------------------------------------------------------------
