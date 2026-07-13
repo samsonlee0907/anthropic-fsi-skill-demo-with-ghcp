@@ -47,8 +47,8 @@ skills and tools (Code Interpreter, Web Search, SEC EDGAR MCP) shown on the righ
 ![Completed Equity Research run showing the live activity feed, narrative with SEC filing URLs, and the workbook download button](docs/images/portal-run-equity-research.png)
 
 *A completed **Equity Research** run. The live activity feed shows the agent loading
-governed skills and calling toolbox-routed tools (`sec_edgar___get_company_info`,
-`sec_edgar___get_recent_filings`, `sec_edgar___get_key_metrics`, `web`) and the code
+governed skills and calling toolbox-routed tools (`sec-edgar___get_company_info`,
+`sec-edgar___get_recent_filings`, `sec-edgar___get_key_metrics`, `web`) and the code
 interpreter; the narrative cites **real SEC filing URLs**; and the finished workbook is
 offered as a **download button** (`MSFT_valuation_package_*.xlsx`).*
 
@@ -151,20 +151,35 @@ GA [GitHub Copilot for Azure](https://learn.microsoft.com/en-us/azure/developer/
 and [use-toolbox-in-hosted-agent](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/microsoft-foundry/foundry-agent/create/references/use-toolbox-in-hosted-agent.md)
 guides describe the same MCP endpoint contract this repo implements.
 
-### GA alignment notes
+### GA alignment
 
-Foundry **toolbox is now GA** ("Build" + "Consume" pillars). This asset already follows the
-GA contract — MCP consumer endpoint (`/toolboxes/{name}/mcp?api-version=v1`, always the default
-version), `https://ai.azure.com/.default` auth scope, and `{server_label}___{tool}` (triple
-underscore) MCP tool naming. A few GA-era enhancements are documented as recommended follow-ups
-in [`docs/runbook.md` §9](docs/runbook.md#9-extending-to-more-live-data-sources):
+Foundry **toolbox is GA** ("Build" + "Consume" pillars) and this asset is built on the GA
+contract end-to-end — the items below are **implemented**, not aspirational:
 
-- **Tool Search** (`toolbox_search_preview`) to keep model context flat as toolboxes grow
-  past ~5 tools.
-- **Declarative provisioning** via `azd ai toolbox create --from-file` + `azd ai skill create`
-  (GA), which can replace this repo's REST-based provisioning scripts.
-- **Toolbox-native `code_interpreter`** (GA-supported) — this repo runs CI natively to dodge a
-  preview-era 500; worth re-testing on the GA toolbox.
+- **Declarative provisioning.** The skills, the SEC EDGAR remote-tool connection, and the three
+  scenario toolboxes are created with the GA `azd ai skill create` / `azd ai connection create` /
+  `azd ai toolbox create --from-file` + `publish` commands from
+  [`scripts/provision_foundry.ps1`](scripts/provision_foundry.ps1) — no REST calls or Python
+  provisioning dependencies. `publish` promotes the default version that the MCP endpoint serves.
+- **GA Tool Search.** Each toolbox declares `toolbox_search_preview`, so `web` and the full SEC
+  EDGAR tool set are **discovered** via `tool_search` and **executed** via `call_tool`, keeping
+  the model's context flat as a toolbox grows past ~5 tools.
+- **MCP consumer contract.** Consumer endpoint `/toolboxes/{name}/mcp?api-version=v1` (always the
+  default/published version), the `https://ai.azure.com/.default` auth scope, and
+  `{connection}___{tool}` (triple-underscore) tool naming — e.g. `sec-edgar___get_company_info`
+  (the connection name uses a dash, so the namespace does too).
+- **`code_interpreter` stays native.** The preview toolbox Code Interpreter returns server-side
+  500s and artifact egress needs the native sandbox container, so CI runs as the Foundry-native
+  hosted tool and is deliberately kept **out** of the toolbox.
+
+This flow is validated end-to-end on a **clean resource group**: all 12 skills + the SEC EDGAR
+connection register, all three toolboxes publish with SEC bound, the three agents deploy, and
+the validator returns **3/3 downloadable OOXML** artifacts sourcing live MSFT SEC + web data.
+Note that `azd`'s CLI-delegated credential can fail intermittently
+(`AzureDeveloperCLICredential: exit status 1`) regardless of `az` token latency; the
+provisioning and deploy steps wrap every `azd` call in a bounded retry, and toolbox re-creation
+verifies deletion via `toolbox list` (with `--force`), so the flow is self-correcting and
+idempotent.
 
 ## Architecture
 
@@ -206,7 +221,7 @@ flowchart LR
 2. The user starts a scenario (`POST /api/run`, body `{ "scenario": "...", "message": "..." }`).
    The response is a **Server-Sent Events** stream, so the portal renders a **live activity
    feed** (lifecycle phases plus the real governed tool calls — `load_skill`, `web`,
-   `sec_edgar___*`) instead of a static spinner while the run is in flight.
+   `sec-edgar___*`) instead of a static spinner while the run is in flight.
 3. The API authenticates with `DefaultAzureCredential` (Container App managed identity) and
    invokes the scenario's hosted agent over the Foundry **Responses** protocol in
    **background mode** (`stream:false, store:true, background:true`), then polls until
@@ -261,13 +276,13 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Download buttons missing — only a `*_agent_summary.*` fallback file appears; agent logs `AuthorizationFailure` on blob upload | Storage `publicNetworkAccess` was flipped to `Disabled` — often by a subscription/management-group **Azure Policy** *after* deploy. The error wording is identical to a missing RBAC role, but the instance identities already hold `Storage Blob Data Contributor`; it's a **network** block, not identity. | `deploy.ps1` self-heals via `scripts/ensure_storage_public.ps1` at step 1 and step 7b (re-asserts Enabled, verifies it stuck, and creates a Waiver exemption if a `modify` policy is reverting it — a plain `az storage account update` silently no-ops under such a policy). If you lack `policyExemptions/write`, ask a Policy owner for an RG exemption, or use private endpoints. |
+| Download buttons missing — only a `*_agent_summary.*` fallback file appears; agent logs `AuthorizationFailure` on blob upload | Storage `publicNetworkAccess` was flipped to `Disabled` — often by a subscription/management-group **Azure Policy** *after* deploy. The error wording is identical to a missing RBAC role, but the instance identities already hold `Storage Blob Data Contributor`; it's a **network** block, not identity. | `deploy.ps1` self-heals via `scripts/ensure_storage_public.ps1` at step 1 and step 7 (re-asserts Enabled, verifies it stuck, and creates a Waiver exemption if a `modify` policy is reverting it — a plain `az storage account update` silently no-ops under such a policy). If you lack `policyExemptions/write`, ask a Policy owner for an RG exemption, or use private endpoints. |
 | `deploy.ps1` stops at infra with "could not resolve principal id" | `az ad signed-in-user show` returned nothing — usually a Conditional Access / CAE token challenge. | Re-run with `-PrincipalId <your-object-id>` (`az ad signed-in-user show --query id -o tsv`, or copy the `oid` from the error). |
 | Skill registration fails with an `agents/read` permission error | Developer RBAC was skipped because the principal id resolved blank on an older run. | Fixed by the fail-fast principal resolver above; if you already hit it, assign **Azure AI User** + **Cognitive Services User** to your object ID on the Foundry account and resume with `-SkipInfra`. |
 | Infra fails with `ManagedEnvironmentCapacityHeavyUsageError` | The region has model quota but is out of **Container Apps** capacity (independent of model quota). | Deploy in another region (East US 2 is the tested default). |
 | A download link opens the portal root / a dead `sandbox:/mnt/data/...` link | The model narrated a sandbox link instead of relying on the real file. | The BFF strips these automatically (`orchestrator._strip_sandbox_links`) — use the artifact **button**. If *no* button appears at all, it's the storage-network issue above. |
 | `az acr build` exits non-zero with `UnicodeEncodeError: 'charmap'` on Windows | Cosmetic crash in the CLI's log streamer; the server-side build actually **succeeded**. | Ignore the exit code and verify with `az acr task list-runs --registry <acr> --top 1 -o table`. `deploy.ps1` handles this automatically. |
-| `azd deploy` fails with `AzureCLICredential: exit status 1` | Credential lookup flakes under back-to-back deploys. | Deploy one agent at a time and retry (`deploy.ps1` retries 3×). Ensure `azd config set auth.useAzCliAuth true`. |
+| `azd deploy` or `azd ai skill/toolbox` fails with `AzureDeveloperCLICredential: exit status 1` | azd's CLI-delegated credential flakes intermittently (~1 in 3) under back-to-back calls, independent of `az` token latency. | Expected and self-correcting: `provision_foundry.ps1` wraps every `azd` call in a bounded retry and re-verifies toolbox deletion via `toolbox list` (with `--force`) before re-creating; `deploy.ps1` retries each agent deploy 3×. Ensure `azd config set auth.useAzCliAuth true` and that `az login` covers the `https://ai.azure.com/.default` scope. |
 | A scenario 408-times out (~360s), or validation reports 2/3 | A heavy single prompt (deep SEC retrieval + full multi-sheet model) at the model layer, or a transient `500`/`429` on the poll GET. | Expected: the BFF retries the poll, runs a corrective artifact turn, and finally emits a **type-correct** fallback file. Re-run the single scenario. |
 | Provisioning (step 1) fails `InsufficientQuota` with no live resources present | A previously-deleted env left a **soft-deleted Foundry account** still holding model TPM. | `az cognitiveservices account list-deleted -o table`, then `az cognitiveservices account purge ...` (see runbook §10). |
 | SEC EDGAR tools never fire | SEC MCP not deployed / `SEC_EDGAR_MCP_URL` unset, or `SEC_EDGAR_USER_AGENT` (a real contact string) missing on the MCP app. | Deploy with `-SecEdgarUserAgent "Name (you@example.com)"`, confirm `SEC_EDGAR_MCP_URL` is set and bound into the toolboxes. SEC EDGAR is optional; web search still grounds the analysis. |
@@ -282,11 +297,10 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 ├── infra/                  # subscription-scoped bicep (RG, Foundry, ACR, Storage, KV, ACA, RBAC)
 ├── agents/
 │   ├── hosted/             # env-driven hosted-agent runtime + Blob artifact egress + azd project
-│   ├── mcp/sec-edgar/      # self-hosted SEC EDGAR remote MCP server (optional)
-│   └── scripts/            # register skills, create + bind toolboxes
+│   └── mcp/sec-edgar/      # self-hosted SEC EDGAR remote MCP server (optional)
 ├── api/                    # FastAPI BFF (background Responses, SSE, artifact proxy)
 ├── portal/                 # Next.js portal (3 scenario tabs, streaming, artifact download)
-├── scripts/                # deploy helpers + generic end-to-end validator
+├── scripts/                # deploy helpers, declarative Foundry provisioning, end-to-end validator
 └── docs/runbook.md         # operations runbook, RBAC, gotchas, teardown
 ```
 

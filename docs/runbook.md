@@ -226,8 +226,10 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   **twice**: (1) a `load_tools=False` *skills* connection consumed via `as_skills_provider()`
   and entered with `async with skills_toolbox:` in `main()` (so `load_skill` works); and (2) a
   `load_tools=True` *tools* connection placed in the agent's `tools` list with
-  `allowed_tools = {web} ∪ {sec_edgar___*}`, which routes `web_search` + SEC EDGAR **through
-  the governed toolbox**. `code_interpreter` is deliberately EXCLUDED from that allow-list and
+  `allowed_tools = {tool_search, call_tool}` — the GA Tool Search meta-tools, through which
+  `web` and the `sec-edgar___*` tool set are discovered and executed **through the governed
+  toolbox** (each toolbox declares `toolbox_search_preview`). `code_interpreter` is deliberately
+  EXCLUDED from that allow-list and
   executed as the Foundry-native hosted tool — the preview toolbox `code_interpreter` returns
   a reproducible server-side 500, and excluding it also stops the broken toolbox CI from
   shadowing the working native one. Do NOT add `code_interpreter` to the allow-list.
