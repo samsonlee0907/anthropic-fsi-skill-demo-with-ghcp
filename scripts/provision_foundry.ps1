@@ -110,6 +110,42 @@ function Invoke-Azd {
     throw "azd $What failed after $i attempt(s):`n$last"
 }
 
+# azd emits a stderr status line (e.g. "2026/07/13 ... toolbox list: resolved project
+# endpoint ... (source=azdEnv)") BEFORE the JSON payload; because Invoke-Azd captures
+# 2>&1 that noise is interleaved with the JSON and plain ConvertFrom-Json chokes on it.
+# Extract the JSON value (first { or [ to the matching last } or ]) before parsing.
+function ConvertFrom-AzdJson {
+    param([string]$Text)
+    if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
+    $start = $Text.IndexOfAny([char[]]@('{', '['))
+    if ($start -lt 0) { return $null }
+    $close = if ($Text[$start] -eq '{') { '}' } else { ']' }
+    $end = $Text.LastIndexOf($close)
+    if ($end -lt $start) { return $null }
+    try { return $Text.Substring($start, $end - $start + 1) | ConvertFrom-Json -ErrorAction Stop }
+    catch { return $null }
+}
+
+# Reliably delete a toolbox (all versions) so `create` is idempotent. The delete call
+# hits the same intermittent AzureDeveloperCLICredential failures as everything else, and
+# a silently-failed delete makes the subsequent `create` abort with "already exists". So
+# retry until `toolbox list` confirms the name is gone (or was never there).
+function Remove-ToolboxReliably {
+    param([string]$Name, [string]$Env, [int]$Retries = 8, [int]$DelaySeconds = 4)
+    for ($i = 1; $i -le $Retries; $i++) {
+        $listObj = ConvertFrom-AzdJson (& azd ai toolbox list -e $Env -o json 2>&1 | Out-String)
+        if ($listObj -and -not (@($listObj.toolboxes | Where-Object { $_.name -eq $Name }).Count)) {
+            return  # confirmed absent
+        }
+        & azd ai toolbox delete $Name -e $Env --no-prompt --force 2>&1 | Out-Null
+        Start-Sleep $DelaySeconds
+    }
+    $listObj = ConvertFrom-AzdJson (& azd ai toolbox list -e $Env -o json 2>&1 | Out-String)
+    if ($listObj -and (@($listObj.toolboxes | Where-Object { $_.name -eq $Name }).Count)) {
+        throw "could not delete existing toolbox $Name after $Retries attempts"
+    }
+}
+
 # Fetch a skill's SKILL.md from pinned GitHub raw, retrying transient 429/5xx.
 function Get-SkillMd {
     param([string]$Name, [int]$Attempts = 6)
@@ -200,24 +236,33 @@ try {
             ($doc | ConvertTo-Json -Depth 6) | Set-Content -Path $file -Encoding utf8
 
             # Recreate for idempotency: delete any existing toolbox (all versions) first.
-            & azd ai toolbox delete $name -e $EnvName --no-prompt 2>&1 | Out-Null
+            Remove-ToolboxReliably -Name $name -Env $EnvName
 
             $createOut = Invoke-Azd -Args @('ai', 'toolbox', 'create', $name, '--from-file', $file, '-e', $EnvName, '-o', 'json') -What "toolbox create $name"
 
-            # Determine the version to promote. Prefer the JSON create output; fall
-            # back to the newest version reported by `toolbox versions list`.
+            # Determine the version to promote. azd emits snake_case JSON (default_version,
+            # versions[].version), sometimes prefixed by a stderr status line, so parse
+            # defensively across the create output and a `versions list` fallback.
             $version = $null
-            try {
-                $obj = $createOut | ConvertFrom-Json -ErrorAction Stop
-                $version = $obj.version
-                if (-not $version -and $obj.defaultVersion) { $version = $obj.defaultVersion }
-            } catch { }
+            $obj = ConvertFrom-AzdJson $createOut
+            if ($obj) {
+                foreach ($cand in @($obj.version, $obj.default_version)) {
+                    if ($cand) { $version = [string]$cand; break }
+                }
+                if (-not $version -and $obj.versions) {
+                    $version = ($obj.versions | ForEach-Object { $_.version } | Where-Object { $_ } | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
+                }
+                if (-not $version -and $obj.id -match ':(\d+)$') { $version = $Matches[1] }
+            }
             if (-not $version) {
                 $vout = Invoke-Azd -Args @('ai', 'toolbox', 'versions', 'list', $name, '-e', $EnvName, '-o', 'json') -What "toolbox versions list $name"
-                try {
-                    $vers = $vout | ConvertFrom-Json -ErrorAction Stop
-                    $version = ($vers | ForEach-Object { $_.version } | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
-                } catch { }
+                $vobj = ConvertFrom-AzdJson $vout
+                if ($vobj) {
+                    if ($vobj.default_version) { $version = [string]$vobj.default_version }
+                    if (-not $version -and $vobj.versions) {
+                        $version = ($vobj.versions | ForEach-Object { $_.version } | Where-Object { $_ } | Sort-Object { [int]$_ } -Descending | Select-Object -First 1)
+                    }
+                }
             }
             if (-not $version) { throw "could not determine created version for toolbox $name" }
 
