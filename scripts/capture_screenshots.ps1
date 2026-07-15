@@ -73,6 +73,19 @@ function Get-CanonicalArtifactImageName {
   }
 }
 
+function Get-BestRenderedArtifactImage {
+  param(
+    [string[]] $Paths
+  )
+  $items = @(
+    $Paths |
+      Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+      ForEach-Object { Get-Item -LiteralPath $_ }
+  )
+  if (-not $items) { return $null }
+  return ($items | Sort-Object Length -Descending | Select-Object -First 1).FullName
+}
+
 Write-Host "== FSI screenshot capture ==" -ForegroundColor Cyan
 Write-Host "Portal    : $PortalUrl"
 Write-Host "Scenarios : $Scenarios"
@@ -131,13 +144,22 @@ if ($SkipOffice) {
     try {
       $produced = @(
         (& $officeScript -InputFile $f.FullName -OutDir $OutDir -BaseName $base) |
+          ForEach-Object { [string]$_ } |
           ForEach-Object { $_ -split "(`r`n|`n)" } |
-          Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+          ForEach-Object { $_.Trim() } |
+          Where-Object {
+            $_ -and
+            $_ -match '^[A-Za-z]:\\.*\.png$' -and
+            (Test-Path -LiteralPath $_)
+          }
       )
       $canonical = Get-CanonicalArtifactImageName -Scenario $entry.scenario -Extension $f.Extension
       if ($canonical -and $produced.Count -gt 0) {
-        Copy-Item -LiteralPath $produced[0] -Destination (Join-Path $OutDir $canonical) -Force
-        Write-Host "  aliased $($produced[0]) -> $canonical"
+        $best = Get-BestRenderedArtifactImage -Paths $produced
+        if ($best) {
+          Copy-Item -LiteralPath $best -Destination (Join-Path $OutDir $canonical) -Force
+          Write-Host "  aliased $best -> $canonical"
+        }
       }
     } catch {
       Write-Warning "  failed to render $($f.Name): $($_.Exception.Message)"

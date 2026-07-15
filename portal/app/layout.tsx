@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'FSI Multi-Agent Studio',
+  title: 'FSI Agent Demo Portal',
   description: 'A financial-services multi-agent demo powered by Microsoft Foundry Agent Service.'
 };
 

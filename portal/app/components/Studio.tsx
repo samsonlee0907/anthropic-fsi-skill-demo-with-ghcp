@@ -342,7 +342,7 @@ export function Studio() {
               </svg>
             </span>
             <span>
-              <strong>FSI Multi-Agent Studio</strong>
+              <strong>FSI Agent Demo Portal</strong>
               <small>Powered by Microsoft Foundry Agent Service</small>
             </span>
           </div>
@@ -355,7 +355,7 @@ export function Studio() {
         <section className="heroContent" aria-labelledby="studio-title">
           <div>
             <p className="heroLabel">Microsoft Foundry demo portal</p>
-            <h1 id="studio-title">Run scenario-based financial agents backed by a governed skill library.</h1>
+            <h1 id="studio-title">FSI Agent Demo Portal</h1>
             <p className="heroCopy">
               Select an FSI workflow, tailor the mandate, and watch a dedicated scenario agent load
               the relevant Anthropic-derived skills, pull live figures from SEC EDGAR filings and
