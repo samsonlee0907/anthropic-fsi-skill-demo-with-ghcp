@@ -34,8 +34,9 @@ there is no bundled synthetic dataset — agents source figures live from SEC ED
    toolbox grows. So the toolbox is the single unified, governed, portal-visible tool surface.
    `code_interpreter` is the ONE exception: it comes from `FoundryChatClient` (native) and is NOT
    added to the toolbox, because `ArtifactEgressMiddleware` depends on the native sandbox
-   `container_id`, and the preview toolbox-MCP `code_interpreter` returns a reproducible 500;
-   keeping it out of the toolbox also stops the model discovering the broken tool via Tool Search.
+   `container_id`. Foundry's GA toolbox docs include Code Interpreter support, but this repo's
+   validated download path is the native sandbox, and keeping CI out of the toolbox also stops the
+   model shadowing that native path via Tool Search.
    The skills path is unchanged: a first `load_tools=False` toolbox consumed via
    `as_skills_provider()` + `load_skill`, connected with `async with skills_toolbox:` in `main()`
    (skills still surface as MCP resources even with Tool Search on). The preview
@@ -135,10 +136,10 @@ azd deploy fsi-pe-lbo -e <env>
   (`load_tools=False`, `as_skills_provider()`) is connected via `async with skills_toolbox:` in
   `main()`. The *tools* toolbox (`load_tools=True`, `.allowed_tools = {"tool_search", "call_tool"}`)
   goes in the agent `tools` list and routes web_search + SEC EDGAR through the toolbox's GA Tool
-  Search (`web` + `sec-edgar___*` are discovered via `tool_search` and run via `call_tool`). Do NOT
-  add `code_interpreter` to the toolbox — the preview toolbox CI 500s and the native sandbox
-  `container_id` is required by artifact egress; run it natively via
-  `FoundryChatClient.get_code_interpreter_tool()`.
+  Search (`web` + `sec-edgar___*` are discovered via `tool_search` and run via `call_tool`). This
+  sample keeps `code_interpreter` native because artifact egress depends on the hosted sandbox
+  `container_id`; run it via `FoundryChatClient.get_code_interpreter_tool()` unless you also
+  rework and revalidate artifact delivery.
 - **Invoke hosted agents with Responses background mode + poll**, not plain `stream=false`. Plain
   non-streaming holds the connection open and the Foundry gateway disconnects on long Code
   Interpreter tasks. Submit `POST {agentEndpoint}/openai/responses?api-version=v1` with

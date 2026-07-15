@@ -20,9 +20,9 @@
          built-in `web_search` tool (named `web`), the GA Tool Search meta-tool
          `toolbox_search_preview` (named `tool_search`), and its scenario skills.
          code_interpreter is DELIBERATELY OMITTED — it runs as the Foundry-native
-         hosted tool in the agent (artifact egress depends on the native sandbox
-         container id), and omitting it also stops the model discovering the broken
-         preview toolbox CI via Tool Search.
+         hosted tool in the agent because artifact egress depends on the native
+         sandbox container id, and omitting it also stops the model shadowing that
+         native path via Tool Search.
 
     With Tool Search enabled each toolbox's MCP `tools/list` returns ONLY
     `tool_search` + `call_tool`; the agent discovers `web` and the full
@@ -219,8 +219,9 @@ try {
             $def = $Toolboxes[$name]
 
             # Build the declarative toolbox document (OpenAI.Tool shape for `tools`).
-            # NB: NO code_interpreter (native only); web + tool_search are the only
-            # tools, and Tool Search hides them behind the two meta-tools at runtime.
+            # NB: NO code_interpreter (native only); artifact egress depends on the
+            # native sandbox container id. web + tool_search are the only tools, and
+            # Tool Search hides them behind the two meta-tools at runtime.
             $tools = @(
                 [ordered]@{ type = 'web_search'; name = 'web' },
                 [ordered]@{ type = 'toolbox_search_preview'; name = 'tool_search' }

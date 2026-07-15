@@ -3,7 +3,8 @@
   One-command local screenshot capture for the FSI demo README.
 
 .DESCRIPTION
-  Produces the images embedded in README.md:
+  Produces the images embedded in README.md and fails fast if the portal only returns
+  fallback `*_agent_summary.*` artifacts instead of the real generated files:
     1. Portal UI (Playwright/Chromium) — scenario gallery + a completed run per scenario,
        and downloads each produced artifact (.xlsx / .pptx).
     2. Rendered artifacts (Office COM) — turns the downloaded workbook/deck into PNGs.
@@ -58,6 +59,19 @@ if (-not $OutDir) { $OutDir = Join-Path $repoRoot 'docs\images' }
 if (-not (Test-Path -LiteralPath $OutDir)) { New-Item -ItemType Directory -Force -Path $OutDir | Out-Null }
 $OutDir = (Resolve-Path -LiteralPath $OutDir).Path
 $artifactDir = Join-Path $OutDir '_artifacts'
+$manifestPath = Join-Path $OutDir 'manifest.json'
+
+function Get-CanonicalArtifactImageName {
+  param(
+    [string] $Scenario,
+    [string] $Extension
+  )
+  switch ("$Scenario|$Extension".ToLowerInvariant()) {
+    'equity-research|.xlsx' { return 'artifact-equity-dcf.png' }
+    'ib-pitch|.pptx'        { return 'artifact-ib-pitch-slide.png' }
+    default                 { return $null }
+  }
+}
 
 Write-Host "== FSI screenshot capture ==" -ForegroundColor Cyan
 Write-Host "Portal    : $PortalUrl"
@@ -70,11 +84,13 @@ try {
   if (-not (Test-Path (Join-Path $shotDir 'node_modules\playwright'))) {
     Write-Host "`n[1/3] Installing Playwright..." -ForegroundColor Cyan
     npm install --silent
+    if ($LASTEXITCODE -ne 0) { throw "npm install failed in $shotDir" }
   } else {
     Write-Host "`n[1/3] Playwright already installed." -ForegroundColor Cyan
   }
   # Ensure the Chromium browser binary is present (no-op if already downloaded).
   npx --yes playwright install chromium | Out-Host
+  if ($LASTEXITCODE -ne 0) { throw "playwright install chromium failed" }
 
   # --- 2. Capture the portal ------------------------------------------------------
   Write-Host "`n[2/3] Capturing portal UI..." -ForegroundColor Cyan
@@ -86,6 +102,7 @@ try {
   $env:RUN_TIMEOUT_MS = ($RunTimeoutSec * 1000).ToString()
   $env:HEADED = if ($Headed) { 'true' } else { 'false' }
   node capture_portal.mjs
+  if ($LASTEXITCODE -ne 0) { throw "portal capture failed validation" }
 }
 finally {
   Pop-Location
@@ -94,23 +111,34 @@ finally {
 # --- 3. Render downloaded artifacts to PNG ---------------------------------------
 if ($SkipOffice) {
   Write-Host "`n[3/3] Skipping Office render (per -SkipOffice)." -ForegroundColor Yellow
-} elseif (-not (Test-Path -LiteralPath $artifactDir)) {
-  Write-Host "`n[3/3] No artifacts downloaded; nothing to render." -ForegroundColor Yellow
+} elseif (-not (Test-Path -LiteralPath $manifestPath)) {
+  Write-Host "`n[3/3] No manifest found; nothing to render." -ForegroundColor Yellow
 } else {
   Write-Host "`n[3/3] Rendering artifacts to PNG (Office COM)..." -ForegroundColor Cyan
   $officeScript = Join-Path $shotDir 'capture_office.ps1'
-  $files = Get-ChildItem -LiteralPath $artifactDir -File | Where-Object { $_.Extension -in '.xlsx', '.xlsm', '.xls', '.pptx', '.ppt' }
-  if (-not $files) {
-    Write-Host "  (no .xlsx/.pptx artifacts found in $artifactDir)" -ForegroundColor Yellow
+  $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+  $artifacts = @($manifest.artifacts | Where-Object { $_.file })
+  if (-not $artifacts) {
+    Write-Host "  (manifest contains no downloaded artifacts)" -ForegroundColor Yellow
   }
-  foreach ($f in $files) {
+  foreach ($entry in $artifacts) {
+    $f = Get-Item -LiteralPath (Join-Path $OutDir ($entry.file -replace '/', '\'))
     $kind = if ($f.Extension -match 'xls') { 'xlsx' } else { 'pptx' }
     # Derive scenario from the manifest if available, else from the filename.
     $base = "artifact-$kind-$([System.IO.Path]::GetFileNameWithoutExtension($f.Name))"
     $base = ($base -replace '[^A-Za-z0-9._-]', '-')
     Write-Host "  rendering $($f.Name)..."
     try {
-      & $officeScript -InputFile $f.FullName -OutDir $OutDir -BaseName $base | Out-Null
+      $produced = @(
+        (& $officeScript -InputFile $f.FullName -OutDir $OutDir -BaseName $base) |
+          ForEach-Object { $_ -split "(`r`n|`n)" } |
+          Where-Object { $_ -and (Test-Path -LiteralPath $_) }
+      )
+      $canonical = Get-CanonicalArtifactImageName -Scenario $entry.scenario -Extension $f.Extension
+      if ($canonical -and $produced.Count -gt 0) {
+        Copy-Item -LiteralPath $produced[0] -Destination (Join-Path $OutDir $canonical) -Force
+        Write-Host "  aliased $($produced[0]) -> $canonical"
+      }
     } catch {
       Write-Warning "  failed to render $($f.Name): $($_.Exception.Message)"
     }

@@ -186,8 +186,18 @@ python scripts/validate.py pe-lbo              # one scenario
 ```
 
 The validator submits to `/api/run`, reads the SSE stream, downloads the produced artifact,
-and asserts it is a real OOXML file (PK zip signature). Exit code is non-zero on any
-failure, so it doubles as a CI gate.
+and asserts it is a real OOXML file (PK zip signature) **and not the API fallback summary
+artifact**. Exit code is non-zero on any failure, so it doubles as a CI gate.
+
+For a UI-path validation that also refreshes the README screenshots, run:
+
+```powershell
+./scripts/capture_screenshots.ps1 -PortalUrl <PORTAL_URL>
+```
+
+That harness drives the live portal headlessly, waits for the artifact buttons, downloads
+the generated files, and now fails if a scenario only emits a fallback `*_agent_summary.*`
+artifact or misses an expected default file type.
 
 Quick API checks:
 
@@ -228,11 +238,13 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   `load_tools=True` *tools* connection placed in the agent's `tools` list with
   `allowed_tools = {tool_search, call_tool}` — the GA Tool Search meta-tools, through which
   `web` and the `sec-edgar___*` tool set are discovered and executed **through the governed
-  toolbox** (each toolbox declares `toolbox_search_preview`). `code_interpreter` is deliberately
-  EXCLUDED from that allow-list and
-  executed as the Foundry-native hosted tool — the preview toolbox `code_interpreter` returns
-  a reproducible server-side 500, and excluding it also stops the broken toolbox CI from
-  shadowing the working native one. Do NOT add `code_interpreter` to the allow-list.
+  toolbox** (each toolbox declares `toolbox_search_preview`). This sample deliberately keeps
+  `code_interpreter` OUT of that allow-list and runs it as the Foundry-native hosted tool:
+  the portal's artifact egress is implemented against the native sandbox `container_id`, and
+  the live UI / validator path is verified against that native flow. Foundry's GA toolbox
+  docs include Code Interpreter support, but this sample's validated download path is the
+  native one. Do NOT add `code_interpreter` to the allow-list unless you also rework and
+  re-validate artifact delivery.
 - **Invoke hosted agents with Responses background mode + poll**, not plain `stream:false`.
   Background requires `store:true`. The final text carries the `<<<ARTIFACT ...>>>` sentinel.
 - **The host strips Code Interpreter content types** from the outer `/responses` output, so
@@ -296,6 +308,10 @@ If you cannot create exemptions (no policy permissions), ask a Policy owner for 
 exclusion for the resource group, or adopt the private-endpoint architecture below. RBAC alone is
 not sufficient — the request never reaches the RBAC check when the network path is closed.
 
+Before a live demo, rerun `scripts/ensure_storage_public.ps1` or at least verify
+`az storage account show -n <acct> -g <rg> --query publicNetworkAccess -o tsv` still returns
+`Enabled`. A governed subscription can re-disable it days after a successful deploy.
+
 ### Private networking (enterprise alternative)
 
 To satisfy a "no public storage" policy natively instead of exempting it, keep
@@ -356,10 +372,11 @@ tool naming. The following GA capabilities are already adopted (validate any cha
    references `connections`, `tools`, and `skills` by name with no embedded credentials. This
    retired the REST-based provisioning scripts and the preview-era
    `Foundry-Features: Toolboxes=V1Preview` header workaround (no longer required on GA).
-3. **`code_interpreter` stays native, not in the toolbox.** The runtime runs Code Interpreter via
-   `FoundryChatClient` — `ArtifactEgressMiddleware` depends on the native sandbox `container_id`,
-   and the preview toolbox-CI still `500`s. Keeping CI out of the toolbox also stops the model
-   discovering the broken tool through Tool Search.
+3. **This sample keeps `code_interpreter` native, not in the toolbox.** Foundry's GA toolbox docs
+   include Code Interpreter support, but this repo's validated artifact-egress path still runs CI
+   via `FoundryChatClient`: `ArtifactEgressMiddleware` depends on the native sandbox
+   `container_id`, and the live portal / validator / screenshot flow is verified against that
+   native path. The toolbox remains the governed surface for skills plus SEC EDGAR / web search.
 4. **No `FOUNDRY_`-prefixed custom container env vars.** The platform reserves the `FOUNDRY_`
    prefix and may overwrite such vars at runtime, so the container runtime reads
    `FSI_PROJECT_ENDPOINT` (mapped from the azd-side `FOUNDRY_PROJECT_ENDPOINT` in `azure.yaml`).

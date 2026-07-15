@@ -34,15 +34,17 @@ mandate to analyse any ticker.
 ## What it looks like
 
 Everything below is produced by the **default one-click Microsoft (MSFT) prompts** — no
-synthetic data. The images are regenerated from a live deployment with
-[`scripts/capture_screenshots.ps1`](scripts/screenshots/README.md).
+synthetic data. Regenerate the images from a live deployment with
+[`scripts/capture_screenshots.ps1`](scripts/capture_screenshots.ps1) (guide:
+[`scripts/screenshots/README.md`](scripts/screenshots/README.md)).
 
 ### The portal
 
 ![Scenario gallery: three FSI workflows, each mapped to one Foundry hosted agent and its skill toolbox](docs/images/portal-landing.png)
 
 *Scenario gallery — one hosted agent per FSI workflow, with each toolbox's governed
-skills and tools (Code Interpreter, Web Search, SEC EDGAR MCP) shown on the right.*
+skills and live data tools shown on the right. The runs then use native Code Interpreter
+to build the Office artifacts.*
 
 ![Completed Equity Research run showing the live activity feed, narrative with SEC filing URLs, and the workbook download button](docs/images/portal-run-equity-research.png)
 
@@ -168,13 +170,15 @@ contract end-to-end — the items below are **implemented**, not aspirational:
   default/published version), the `https://ai.azure.com/.default` auth scope, and
   `{connection}___{tool}` (triple-underscore) tool naming — e.g. `sec-edgar___get_company_info`
   (the connection name uses a dash, so the namespace does too).
-- **`code_interpreter` stays native.** The preview toolbox Code Interpreter returns server-side
-  500s and artifact egress needs the native sandbox container, so CI runs as the Foundry-native
-  hosted tool and is deliberately kept **out** of the toolbox.
+- **This sample keeps `code_interpreter` native.** Foundry's GA toolbox docs include Code
+  Interpreter support, but this asset keeps CI as the Foundry-native hosted tool because
+  the validated artifact-download path depends on the native sandbox container. The
+  toolbox remains the governed surface for skills, SEC EDGAR, and web search.
 
 This flow is validated end-to-end on a **clean resource group**: all 12 skills + the SEC EDGAR
 connection register, all three toolboxes publish with SEC bound, the three agents deploy, and
-the validator returns **3/3 downloadable OOXML** artifacts sourcing live MSFT SEC + web data.
+the validator returns **3/3 downloadable non-fallback OOXML** artifacts sourcing live MSFT SEC
+and web data.
 Note that `azd`'s CLI-delegated credential can fail intermittently
 (`AzureDeveloperCLICredential: exit status 1`) regardless of `az` token latency; the
 provisioning and deploy steps wrap every `azd` call in a bounded retry, and toolbox re-creation
@@ -251,9 +255,9 @@ flowchart LR
    meta-tools (`tool_search` + `call_tool`). Each toolbox declares `toolbox_search_preview`, so the
    model discovers `web` and the full SEC EDGAR tool set with `tool_search` and runs them with
    `call_tool`, keeping context flat as the toolbox grows. The toolbox is the single, unified,
-   governed tool surface. `code_interpreter` is the one exception: the preview toolbox Code
-   Interpreter returns server-side 500s and artifact egress needs the native sandbox container, so
-   CI runs as the Foundry-native hosted tool and is intentionally **not** added to the toolbox.
+   governed tool surface. `code_interpreter` is the one exception: this sample keeps CI native
+   because artifact egress is implemented against the hosted sandbox container, so CI runs as
+   the Foundry-native hosted tool and is intentionally **not** added to the toolbox.
 4. **SEC EDGAR is a self-hosted remote MCP tool**, not in-container code. It runs as its own
    Container App and is registered as a governed Foundry **project connection**
    (`kind remote-tool`, custom-key header auth) attached to each toolbox; the gateway injects a
@@ -276,7 +280,7 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Download buttons missing — only a `*_agent_summary.*` fallback file appears; agent logs `AuthorizationFailure` on blob upload | Storage `publicNetworkAccess` was flipped to `Disabled` — often by a subscription/management-group **Azure Policy** *after* deploy. The error wording is identical to a missing RBAC role, but the instance identities already hold `Storage Blob Data Contributor`; it's a **network** block, not identity. | `deploy.ps1` self-heals via `scripts/ensure_storage_public.ps1` at step 1 and step 7 (re-asserts Enabled, verifies it stuck, and creates a Waiver exemption if a `modify` policy is reverting it — a plain `az storage account update` silently no-ops under such a policy). If you lack `policyExemptions/write`, ask a Policy owner for an RG exemption, or use private endpoints. |
+| Download buttons missing — only a `*_agent_summary.*` fallback file appears; agent logs `AuthorizationFailure` on blob upload | Storage `publicNetworkAccess` was flipped to `Disabled` — often by a subscription/management-group **Azure Policy** *after* deploy. The error wording is identical to a missing RBAC role, but the instance identities already hold `Storage Blob Data Contributor`; it's a **network** block, not identity. | `deploy.ps1` self-heals via `scripts/ensure_storage_public.ps1` at step 1 and step 7 (re-asserts Enabled, verifies it stuck, and creates a Waiver exemption if a `modify` policy is reverting it — a plain `az storage account update` silently no-ops under such a policy). `scripts/validate.py` and `scripts/capture_screenshots.ps1` now fail this condition instead of accepting the fallback OOXML. If you lack `policyExemptions/write`, ask a Policy owner for an RG exemption, or use private endpoints. |
 | `deploy.ps1` stops at infra with "could not resolve principal id" | `az ad signed-in-user show` returned nothing — usually a Conditional Access / CAE token challenge. | Re-run with `-PrincipalId <your-object-id>` (`az ad signed-in-user show --query id -o tsv`, or copy the `oid` from the error). |
 | Skill registration fails with an `agents/read` permission error | Developer RBAC was skipped because the principal id resolved blank on an older run. | Fixed by the fail-fast principal resolver above; if you already hit it, assign **Azure AI User** + **Cognitive Services User** to your object ID on the Foundry account and resume with `-SkipInfra`. |
 | Infra fails with `ManagedEnvironmentCapacityHeavyUsageError` | The region has model quota but is out of **Container Apps** capacity (independent of model quota). | Deploy in another region (East US 2 is the tested default). |

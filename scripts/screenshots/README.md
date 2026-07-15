@@ -15,10 +15,15 @@ Into `docs/images/` (committed):
 | `portal-run-<scenario>.png` | A completed run: live activity feed, narrative, artifact button |
 | `artifact-xlsx-*-sheet1.png` | First worksheet of a generated workbook (Excel COM) |
 | `artifact-pptx-*-slide1.png` | First slides of a generated deck (PowerPoint COM) |
+| `artifact-equity-dcf.png` | Stable alias for the first rendered Equity workbook image (used by the root README) |
+| `artifact-ib-pitch-slide.png` | Stable alias for the first rendered IB deck slide (used by the root README) |
 | `manifest.json` | Index of images + downloaded artifacts |
 
 Raw downloaded Office files land in `docs/images/_artifacts/` and are **gitignored** —
 only the rendered PNGs are committed.
+
+The capture fails fast if a scenario only returns a fallback `*_agent_summary.*` file or
+misses an expected default artifact type (for IB pitch: both `.pptx` and `.xlsx`).
 
 ## Prerequisites
 
@@ -59,9 +64,11 @@ The default scenario set (`equity-research,ib-pitch`) yields one `.xlsx` and one
 1. **`screenshots/capture_portal.mjs`** (Playwright) drives the portal like a user:
    loads the gallery, clicks a scenario card, fills the default Microsoft prompt via the
    preset button, runs the workflow, waits for the real artifact download button
-   (`a.artifactChip`) to appear, screenshots the completed run, and downloads each
-   artifact via the API. Headless by default, so no browser address bar (and therefore
-   no tenant hostname) is captured. Retina scale (`deviceScaleFactor: 2`).
+   (`a.artifactChip`) to appear on the **latest** agent card, screenshots the completed
+   run, downloads each artifact via the API, and rejects fallback summary files so a
+   broken portal run cannot silently refresh the README images. Headless by default, so
+   no browser address bar (and therefore no tenant hostname) is captured. Retina scale
+   (`deviceScaleFactor: 2`).
 2. **`screenshots/capture_office.ps1`** (Office COM) renders each downloaded artifact:
    - `.pptx` → `Slide.Export(...)` native PNG for the first slides.
    - `.xlsx` → copies the used range as a picture, pastes it into a temporary in-sheet
@@ -72,6 +79,10 @@ The default scenario set (`equity-research,ib-pitch`) yields one `.xlsx` and one
 ## Notes
 
 - A full run is ~3–6 min per scenario and can be flaky headless; timeouts are generous
-  (`-RunTimeoutSec`, default 600s). If a run fails, the script keeps whatever it captured
-  (at minimum the landing gallery) and continues.
+  (`-RunTimeoutSec`, default 600s). The script now exits non-zero if any scenario fails
+  or only emits fallback summary files, while still preserving any screenshots/artifacts
+  it captured for debugging.
 - Re-running overwrites PNGs in place, so the README always reflects the latest UI.
+- If every scenario suddenly regresses to `*_agent_summary.*`, check the live stack's
+  storage account: a governed subscription can flip `publicNetworkAccess` back to
+  `Disabled` after deploy. Repair with `scripts/ensure_storage_public.ps1`.

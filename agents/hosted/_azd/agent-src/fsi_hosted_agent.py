@@ -36,15 +36,13 @@ Design highlights:
 
 3. **code_interpreter is the Foundry-native Responses sandbox tool**
    (``FoundryChatClient.get_code_interpreter_tool``), NOT the toolbox's, and is the ONE
-   tool kept native. The toolbox-MCP ``code_interpreter`` returned a reproducible
-   server-side ``500`` in preview, and — more fundamentally — the
+   tool kept native. Foundry's GA toolbox docs list Code Interpreter support, but the
    :class:`~fsi_artifact_egress.ArtifactEgressMiddleware` harvests artifacts by the
    NATIVE sandbox ``container_id`` (see principle 4), so the deliverables MUST be built
    natively. The GA scenario toolboxes therefore deliberately OMIT ``code_interpreter``
    entirely: it is not in the catalog, so Tool Search cannot surface it and the model
-   cannot accidentally route deliverable-building through the (broken, and egress-blind)
-   toolbox sandbox. The reliable native sandbox builds the formula-driven ``.xlsx`` /
-   ``.pptx`` deliverables.
+   cannot accidentally route deliverable-building away from the validated native path.
+   The reliable native sandbox builds the formula-driven ``.xlsx`` / ``.pptx`` deliverables.
 
 4. **Artifacts egress server-side to Blob Storage.** The ``ResponsesHostServer``
    HTTP wrapper passes text content but strips code_interpreter file citations /
