@@ -93,7 +93,8 @@ mandate to target any public ticker.
    ./scripts/provision_foundry.ps1 -EnvName <env> -AzdDir agents/hosted/_azd
    ```
    This runs `azd ai skill create` for each of the 12 skills (content fetched from the pinned
-   Anthropic commit `-SkillsRef`), `azd ai connection create sec-edgar --kind remote-tool
+   Anthropic commit `-SkillsRef`, then overlaid with any repo-local files in
+   `skills/overrides/`), `azd ai connection create sec-edgar --kind remote-tool
    --auth-type custom-keys` (only when `SEC_EDGAR_MCP_URL` is set), and
    `azd ai toolbox create --from-file <toolbox>.json` + `azd ai toolbox publish` for each of the 3
    scenario toolboxes (publish promotes the default version — the MCP endpoint serves the default).

@@ -86,6 +86,25 @@ function Get-BestRenderedArtifactImage {
   return ($items | Sort-Object Length -Descending | Select-Object -First 1).FullName
 }
 
+function Get-PreferredRenderedArtifactImage {
+  param(
+    [string] $Scenario,
+    [string] $Extension,
+    [string[]] $Paths
+  )
+  $existing = @($Paths | Where-Object { $_ -and (Test-Path -LiteralPath $_) })
+  if (-not $existing) { return $null }
+
+  if ($Scenario -eq 'ib-pitch' -and $Extension -eq '.pptx') {
+    foreach ($preferred in @('-slide2.png', '-slide3.png')) {
+      $match = $existing | Where-Object { $_.ToLowerInvariant().EndsWith($preferred) } | Select-Object -First 1
+      if ($match) { return $match }
+    }
+  }
+
+  return Get-BestRenderedArtifactImage -Paths $existing
+}
+
 Write-Host "== FSI screenshot capture ==" -ForegroundColor Cyan
 Write-Host "Portal    : $PortalUrl"
 Write-Host "Scenarios : $Scenarios"
@@ -142,11 +161,17 @@ if ($SkipOffice) {
     $base = ($base -replace '[^A-Za-z0-9._-]', '-')
     Write-Host "  rendering $($f.Name)..."
     try {
+      $renderArgs = @(
+        '-InputFile', $f.FullName,
+        '-OutDir', $OutDir,
+        '-BaseName', $base
+      )
+      if ($kind -eq 'pptx') { $renderArgs += @('-MaxSlides', '3') }
       $produced = @(
-        (& $officeScript -InputFile $f.FullName -OutDir $OutDir -BaseName $base) |
-          ForEach-Object { [string]$_ } |
-          ForEach-Object { $_ -split "(`r`n|`n)" } |
-          ForEach-Object { $_.Trim() } |
+        (& $officeScript @renderArgs) |
+        ForEach-Object { [string]$_ } |
+        ForEach-Object { $_ -split "(`r`n|`n)" } |
+        ForEach-Object { $_.Trim() } |
           Where-Object {
             $_ -and
             $_ -match '^[A-Za-z]:\\.*\.png$' -and
@@ -155,7 +180,7 @@ if ($SkipOffice) {
       )
       $canonical = Get-CanonicalArtifactImageName -Scenario $entry.scenario -Extension $f.Extension
       if ($canonical -and $produced.Count -gt 0) {
-        $best = Get-BestRenderedArtifactImage -Paths $produced
+        $best = Get-PreferredRenderedArtifactImage -Scenario $entry.scenario -Extension $f.Extension.ToLowerInvariant() -Paths $produced
         if ($best) {
           Copy-Item -LiteralPath $best -Destination (Join-Path $OutDir $canonical) -Force
           Write-Host "  aliased $best -> $canonical"

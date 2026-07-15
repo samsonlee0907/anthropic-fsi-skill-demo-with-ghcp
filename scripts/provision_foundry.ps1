@@ -11,7 +11,8 @@
 
       1. Register the 12 Anthropic financial-analysis skills as Foundry skills
          (`azd ai skill create <name> --file SKILL.md --force`). Skill content is
-         fetched at run time from a pinned Anthropic commit.
+         fetched at run time from a pinned Anthropic commit, then optionally
+         overlaid with repo-local instructions from `skills/overrides/`.
       2. (optional) Register the self-hosted SEC EDGAR MCP server as a GOVERNED
          remote-tool project CONNECTION named `sec-edgar`, carrying the shared
          secret in a custom header. Its tools then namespace as `sec-edgar___*`.
@@ -54,7 +55,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $AzdDir = (Resolve-Path $AzdDir).Path
 
-$RawBase = "https://raw.githubusercontent.com/anthropics/financial-services/$SkillsRef/plugins/vertical-plugins/financial-analysis/skills"
+    $RawBase = "https://raw.githubusercontent.com/anthropics/financial-services/$SkillsRef/plugins/vertical-plugins/financial-analysis/skills"
 
 # The 12 runtime skills (skill-creator intentionally excluded).
 $RuntimeSkills = @(
@@ -147,7 +148,7 @@ function Remove-ToolboxReliably {
 }
 
 # Fetch a skill's SKILL.md from pinned GitHub raw, retrying transient 429/5xx.
-function Get-SkillMd {
+function Get-UpstreamSkillMd {
     param([string]$Name, [int]$Attempts = 6)
     $url = "$RawBase/$Name/SKILL.md"
     for ($i = 1; $i -le $Attempts; $i++) {
@@ -166,9 +167,41 @@ function Get-SkillMd {
     }
 }
 
+function Get-SkillMd {
+    param([string]$Name)
+
+    $base = Get-UpstreamSkillMd -Name $Name
+    $overrideRoot = Join-Path $PSScriptRoot '..\skills\overrides'
+    $fullOverride = Join-Path $overrideRoot "$Name.SKILL.md"
+    $appendOverride = Join-Path $overrideRoot "$Name.append.md"
+
+    if (Test-Path -LiteralPath $fullOverride) {
+        return [System.IO.File]::ReadAllText($fullOverride)
+    }
+    if (Test-Path -LiteralPath $appendOverride) {
+        $overlay = [System.IO.File]::ReadAllText($appendOverride).Trim()
+        if ($overlay) {
+            return ($base.TrimEnd() + "`r`n`r`n" + $overlay + "`r`n")
+        }
+    }
+    return $base
+}
+
 Push-Location $AzdDir
 try {
     azd env select $EnvName | Out-Null
+
+    if (-not $SecEdgarMcpUrl -or -not $FsiMcpKey) {
+        $envLines = @(& azd env get-values -e $EnvName 2>$null)
+        foreach ($line in $envLines) {
+            if (-not $SecEdgarMcpUrl -and $line -match '^SEC_EDGAR_MCP_URL="?(.+?)"?$') {
+                $SecEdgarMcpUrl = $Matches[1]
+            }
+            if (-not $FsiMcpKey -and $line -match '^FSI_MCP_KEY="?(.+?)"?$') {
+                $FsiMcpKey = $Matches[1]
+            }
+        }
+    }
 
     # -----------------------------------------------------------------------
     # 1. Register skills

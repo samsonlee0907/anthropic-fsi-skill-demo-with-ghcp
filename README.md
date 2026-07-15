@@ -65,8 +65,9 @@ Anthropic `dcf-model` + `xlsx-author` skills.*
 ![PowerPoint competitive-positioning slide: MSFT vs GOOGL, ORCL, CRM, ADBE, NOW on scale vs platform breadth](docs/images/artifact-ib-pitch-slide.png)
 
 *Investment Banking → `.pptx`: a competitive-positioning slide (scale vs. platform
-breadth) from the `competitive-analysis` + `pptx-author` skills. The IB run also emits a
-supporting `.pptx` deck and `.xlsx` model as download buttons.*
+breadth) from the `competitive-analysis` + `pptx-author` skills, with repo-local styling and
+QC overlays to keep the exported deck readable in both PowerPoint and flattened PNG form. The
+IB run also emits a supporting `.pptx` deck and `.xlsx` model as download buttons.*
 
 ## Quickstart
 
@@ -302,6 +303,7 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 ├── agents/
 │   ├── hosted/             # env-driven hosted-agent runtime + Blob artifact egress + azd project
 │   └── mcp/sec-edgar/      # self-hosted SEC EDGAR remote MCP server (optional)
+├── skills/overrides/       # repo-local overlays that extend or replace pinned upstream SKILL.md files
 ├── api/                    # FastAPI BFF (background Responses, SSE, artifact proxy)
 ├── portal/                 # Next.js portal (3 scenario tabs, streaming, artifact download)
 ├── scripts/                # deploy helpers, declarative Foundry provisioning, end-to-end validator
@@ -312,8 +314,10 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 
 1. **Pin the upstream skill source.** `scripts/provision_foundry.ps1` fetches each `SKILL.md`
    from a pinned commit of the Anthropic repo (`-SkillsRef`, default `ANTHROPIC_SKILLS_REF`) and
-   registers it with `azd ai skill create`. Point it at your own skill catalog and adjust the
-   `$Skills` list.
+   registers it with `azd ai skill create`. Repo-local overlays in `skills/overrides/` can fully
+   replace a skill (`<name>.SKILL.md`) or append extra house rules (`<name>.append.md`) without
+   forking the upstream catalog. Point the script at your own skill source and adjust the
+   `$Skills` list as needed.
 2. **Map skills to scenarios.** Edit the per-toolbox `skills` lists in the `$Toolboxes`
    definition in `scripts/provision_foundry.ps1` and the scenario metadata in `api/app/config.py`.
 3. **Add scenarios or change models** via `agents/hosted/_azd/azure.yaml` (one service per

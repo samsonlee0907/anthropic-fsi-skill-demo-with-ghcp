@@ -14,9 +14,9 @@ Into `docs/images/` (committed):
 | `portal-landing.png` | Scenario gallery (one hosted agent per FSI workflow) |
 | `portal-run-<scenario>.png` | A completed run: live activity feed, narrative, artifact button |
 | `artifact-xlsx-*-sheet1.png` | First worksheet of a generated workbook (Excel COM) |
-| `artifact-pptx-*-slide1.png` | First slides of a generated deck (PowerPoint COM) |
+| `artifact-pptx-*-slide*.png` | First rendered slides of a generated deck (PowerPoint COM) |
 | `artifact-equity-dcf.png` | Stable alias for the first rendered Equity workbook image (used by the root README) |
-| `artifact-ib-pitch-slide.png` | Stable alias for the first rendered IB deck slide (used by the root README) |
+| `artifact-ib-pitch-slide.png` | Stable alias for the best rendered IB deck slide (prefers slide 2, then 3, for the root README) |
 | `manifest.json` | Index of images + downloaded artifacts |
 
 Raw downloaded Office files land in `docs/images/_artifacts/` and are **gitignored** —
@@ -70,7 +70,7 @@ The default scenario set (`equity-research,ib-pitch`) yields one `.xlsx` and one
    no browser address bar (and therefore no tenant hostname) is captured. Retina scale
    (`deviceScaleFactor: 2`).
 2. **`screenshots/capture_office.ps1`** (Office COM) renders each downloaded artifact:
-   - `.pptx` → `Slide.Export(...)` native PNG for the first slides.
+   - `.pptx` → `Slide.Export(...)` native PNG for the first slides; the README alias for IB pitch prefers slide 2, then slide 3, over a text-heavier cover slide.
    - `.xlsx` → copies the used range as a picture, pastes it into a temporary in-sheet
      chart, and `Chart.Export(...)` — a deterministic, clipboard-safe range→PNG path.
 3. **`capture_screenshots.ps1`** orchestrates: installs Playwright, runs the portal
