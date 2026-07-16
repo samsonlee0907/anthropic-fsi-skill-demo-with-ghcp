@@ -273,7 +273,10 @@ flowchart LR
    and the Container Apps env — RBAC alone is not sufficient. A subscription/management-group
    **Azure Policy** can flip it back to `Disabled` at create time and again *after* deploy,
    breaking artifact download with an `AuthorizationFailure` that looks like a missing role.
-   `deploy.ps1` self-heals via `scripts/ensure_storage_public.ps1`, which re-asserts `Enabled`,
+   The BFF download path is **stateless**: artifact ids encode the blob reference, so
+   `/api/artifacts/{id}` re-fetches the blob via the Container App's **managed identity** on any
+   replica — downloads survive API scale-to-zero, new revisions, and multi-replica routing (no
+   in-memory registry to lose). `deploy.ps1` self-heals via `scripts/ensure_storage_public.ps1`, which re-asserts `Enabled`,
    **verifies it actually stuck** (a Policy `modify` effect makes a plain
    `az storage account update` silently no-op), and creates a resource-group-scoped Waiver
    policy exemption if a policy is reverting it. See the runbook if you lack policy permissions.

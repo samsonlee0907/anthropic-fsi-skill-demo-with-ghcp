@@ -21,6 +21,7 @@ lifecycle *phases* while the run is in flight, and the REAL tool calls (governed
 skill loads + SEC EDGAR MCP calls) parsed from the completed payload.
 """
 import asyncio
+import base64
 import json
 import re
 import tempfile
@@ -50,6 +51,11 @@ _tracer = get_tracer()
 _AI_SCOPE = "https://ai.azure.com/.default"
 
 # id -> {"path": str, "filename": str, "media_type": str}
+# In-process cache for fast serving. It is NOT the source of truth: the API scales to
+# zero and runs up to N replicas, so a download can land on a replica (or a cold-started
+# container) that never held this entry. Durable artifact ids therefore ENCODE the blob
+# reference (see _encode_artifact_id) so any replica can re-fetch the blob via managed
+# identity in resolve_artifact(). This cache is only an optimization / back-compat path.
 ARTIFACTS: Dict[str, dict] = {}
 _ARTIFACT_DIR = Path(tempfile.gettempdir()) / "fsi_artifacts"
 _ARTIFACT_DIR.mkdir(exist_ok=True)
@@ -222,13 +228,91 @@ def _bearer() -> str:
     return _credential().get_token(_AI_SCOPE).token
 
 
-def _register_artifact(fname: str, data: bytes) -> dict:
-    art_id = uuid.uuid4().hex
-    dest = _ARTIFACT_DIR / f"{art_id}_{fname}"
+def _normalize_blobref(blobref: str) -> str:
+    """Ensure a blob reference is ``<container>/<path>`` (egress sentinels always are,
+    but be defensive about a bare path)."""
+    container, _, blobpath = blobref.partition("/")
+    if not blobpath:
+        return f"{ARTIFACTS_CONTAINER}/{blobref}"
+    return blobref
+
+
+def _encode_artifact_id(fname: str, blobref: str) -> str:
+    """Encode the display filename + blob reference into a URL-safe, stateless id, so the
+    download endpoint can re-fetch the blob via managed identity on any replica without
+    shared server state. Not a secret/capability token -- see resolve_artifact for the
+    read-scope validation that keeps this from being an open blob proxy."""
+    payload = json.dumps({"n": fname, "b": _normalize_blobref(blobref)}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
+
+
+def _decode_artifact_id(art_id: str) -> tuple[str, str] | None:
+    """Reverse _encode_artifact_id and validate the blob reference is a safe read inside
+    the artifacts container (no path traversal, no other containers). Returns
+    (filename, blobref) or None if the id is not a durable id / fails validation."""
+    try:
+        pad = "=" * (-len(art_id) % 4)
+        obj = json.loads(base64.urlsafe_b64decode(art_id + pad))
+        fname, blobref = str(obj["n"]), str(obj["b"])
+    except Exception:  # noqa: BLE001 -- any malformed id is simply "not a durable id"
+        return None
+    container, _, blobpath = blobref.partition("/")
+    if not blobpath or container != ARTIFACTS_CONTAINER or ".." in blobpath.split("/"):
+        return None
+    return fname, blobref
+
+
+def _upload_fallback_blob(fname: str, data: bytes) -> str | None:
+    """Persist an in-memory (fallback) artifact to the artifacts container so it, too,
+    survives a replica restart. Best-effort: returns the blob reference on success, or
+    None if storage is unreachable (the caller then keeps the ephemeral local-only path)."""
+    blobpath = f"fallback/{uuid.uuid4().hex}/{fname}"
+    try:
+        client = _blob_service().get_blob_client(ARTIFACTS_CONTAINER, blobpath)
+        client.upload_blob(data, overwrite=True)
+        return f"{ARTIFACTS_CONTAINER}/{blobpath}"
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _register_artifact(fname: str, data: bytes, blobref: str | None = None) -> dict:
+    """Cache an artifact locally and mint a DURABLE id that encodes its blob reference.
+
+    ``blobref`` is the ``<container>/<path>`` the artifact already lives at (egress
+    artifacts). Fallback artifacts have no blob yet, so we upload them first. If the blob
+    reference is known/created, the id is stateless and any replica can re-serve it via
+    resolve_artifact(); otherwise we degrade to an ephemeral in-process id."""
+    if not blobref:
+        blobref = _upload_fallback_blob(fname, data)
+    art_id = _encode_artifact_id(fname, blobref) if blobref else uuid.uuid4().hex
+    dest = _ARTIFACT_DIR / f"{uuid.uuid4().hex}_{fname}"
     dest.write_bytes(data)
     media = _MEDIA.get(Path(fname).suffix.lower(), "application/octet-stream")
     ARTIFACTS[art_id] = {"path": str(dest), "filename": fname, "media_type": media}
     return {"id": art_id, "filename": fname, "url": f"/api/artifacts/{art_id}"}
+
+
+def resolve_artifact(art_id: str) -> dict | None:
+    """Resolve an artifact id to a servable local file. Tries the in-process cache first,
+    then falls back to re-downloading the encoded blob via managed identity and caching it
+    -- so downloads survive scale-to-zero, new revisions, and multi-replica routing."""
+    meta = ARTIFACTS.get(art_id)
+    if meta and Path(meta["path"]).exists():
+        return meta
+    decoded = _decode_artifact_id(art_id)
+    if not decoded:
+        return None
+    fname, blobref = decoded
+    try:
+        data = _download_blob_sync(blobref)
+    except Exception:  # noqa: BLE001
+        return None
+    dest = _ARTIFACT_DIR / f"{uuid.uuid4().hex}_{fname}"
+    dest.write_bytes(data)
+    media = _MEDIA.get(Path(fname).suffix.lower(), "application/octet-stream")
+    meta = {"path": str(dest), "filename": fname, "media_type": media}
+    ARTIFACTS[art_id] = meta
+    return meta
 
 
 def _cell(row: int, value: str) -> str:
@@ -512,7 +596,7 @@ def _harvest_from_text_sync(text: str) -> tuple[str, list[dict]]:
             continue
         try:
             data = _download_blob_sync(blobref)
-            artifacts.append(_register_artifact(name, data))
+            artifacts.append(_register_artifact(name, data, blobref=blobref))
         except Exception as e:  # noqa: BLE001
             artifacts.append({"id": None, "filename": name, "error": str(e)[:200]})
     clean = _SENTINEL_RE.sub("", text)

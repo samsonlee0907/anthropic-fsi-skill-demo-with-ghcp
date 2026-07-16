@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from azure.identity import DefaultAzureCredential
 
 from .config import AGENT_NAMES, DEFAULT_PROMPTS, EDGAR_PROMPTS, PROJECT_ENDPOINT, SCENARIOS, TOOLBOX_META
-from .orchestrator import ARTIFACTS, run_scenario
+from .orchestrator import resolve_artifact, run_scenario
 from .telemetry import configure as configure_telemetry
 
 _TELEMETRY_ON = configure_telemetry()
@@ -91,7 +91,7 @@ def run(req: RunRequest):
 
 @app.get("/api/artifacts/{artifact_id}")
 def artifact(artifact_id: str):
-    meta = ARTIFACTS.get(artifact_id)
+    meta = resolve_artifact(artifact_id)
     if not meta:
         raise HTTPException(status_code=404, detail="Artifact not found")
     return FileResponse(meta["path"], media_type=meta["media_type"], filename=meta["filename"])
