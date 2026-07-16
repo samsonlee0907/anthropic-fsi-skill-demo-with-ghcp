@@ -333,6 +333,15 @@ storage guard exists.
 
 ## 9. Extending to more live data sources
 
+> **SEC EDGAR is just one of many MCP servers you can connect — it is not special.** It is simply
+> the reference `remote-tool` connection wired into this demo. A toolbox can host any number of
+> governed MCP connections, and **each additional MCP server you attach broadens the agents' reach
+> and makes them measurably more capable.** The same
+> `azd ai connection create <name> --kind remote-tool --auth-type custom-keys` pattern applies to
+> every one; GA Tool Search then surfaces the new tools automatically, with no hosted-agent code
+> change. The table below lists FSI data sources, but the pattern is not limited to them — any MCP
+> server (databases, storage, internal APIs, other SaaS tools) can be added the same way.
+
 The scenarios already source real financials from **SEC EDGAR** (self-hosted MCP) plus
 **web search**. To add richer vendor data:
 

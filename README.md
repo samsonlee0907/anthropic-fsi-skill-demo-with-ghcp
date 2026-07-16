@@ -262,7 +262,11 @@ flowchart LR
 4. **SEC EDGAR is a self-hosted remote MCP tool**, not in-container code. It runs as its own
    Container App and is registered as a governed Foundry **project connection**
    (`kind remote-tool`, custom-key header auth) attached to each toolbox; the gateway injects a
-   shared-secret header, so the endpoint is unusable without the key.
+   shared-secret header, so the endpoint is unusable without the key. **SEC EDGAR is only one
+   reference example** of this pattern — it is not special. Any MCP server (vendor or open-source)
+   can be attached the same way, and every governed MCP connection you add makes the agents more
+   capable. See [Add more MCP servers](#reusing-this-pattern-for-your-own-skills) and
+   [runbook §9](docs/runbook.md#9-extending-to-more-live-data-sources) for options.
 5. **Keep artifact storage network-reachable.** Blob egress uses AAD/RBAC over the public
    endpoint (`allowSharedKeyAccess=false`, no anonymous access). Keep
    `publicNetworkAccess=Enabled` unless you add private endpoints for both the agent compute
@@ -322,8 +326,16 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
    definition in `scripts/provision_foundry.ps1` and the scenario metadata in `api/app/config.py`.
 3. **Add scenarios or change models** via `agents/hosted/_azd/azure.yaml` (one service per
    scenario, env-driven) and the `agentModelDeploymentName` parameter in `infra/main.bicep`.
-4. **Connect live vendor data** by registering vendor MCP tools in the Foundry project and
-   exposing them only through the toolbox that needs them (see the runbook).
+4. **Add more MCP servers — SEC EDGAR is just one of many.** The self-hosted SEC EDGAR server is
+   only the reference MCP connection wired into this demo; it is not special. Register any
+   additional MCP server (vendor or open-source) as a governed Foundry `remote-tool` connection,
+   attach it to the toolbox(es) that need it, and GA Tool Search surfaces its tools alongside `web`
+   and `sec-edgar___*` — no agent-code change required. **Every governed MCP connection you add
+   broadens what the agents can do**, so richer analysis is mostly a matter of connecting more
+   sources. See [runbook §9](docs/runbook.md#9-extending-to-more-live-data-sources) for a menu of
+   FSI data sources (market data and estimates, private-company data, credit, transcripts, source
+   documents) — and the same pattern applies to non-FSI MCP servers (databases, storage, internal
+   APIs) too.
 
 ## Official references
 
