@@ -227,6 +227,16 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   reverting it, **self-heals** by creating a resource-group-scoped **Waiver policy exemption** for
   the offending assignment, then re-applies and re-verifies. See *Storage public network access &
   policy exemptions* at the end of this section if you can't create exemptions.
+- **A failed *download* (`{"detail":"Artifact not found"}` / the portal download button 404s) is
+  often a storage-network symptom, NOT a missing file.** Downloads are durable — on a cache miss the
+  BFF re-fetches the blob via managed identity (`orchestrator.resolve_artifact` → `_download_blob_sync`).
+  Managed identity covers *authorization*, not *network reachability*: if `publicNetworkAccess=Disabled`
+  that re-fetch can't reach Blob Storage, `resolve_artifact()` swallows the error and returns `None`, so
+  `/api/artifacts/{id}` answers `404 "Artifact not found"` — the SAME message as a genuinely expired or
+  unknown id. So when a download fails, first check
+  `az storage account show -n <acct> -g <rg> --query publicNetworkAccess -o tsv` (expect `Enabled`) and
+  re-run `scripts/ensure_storage_public.ps1` before assuming the artifact expired. (This is the
+  read-side mirror of the upload `AuthorizationFailure` above; the same `Disabled` account breaks both.)
 - **Dead `sandbox:/mnt/data` links are stripped by the BFF.** The model often narrates
   `[Download the workbook](sandbox:/mnt/data/...)` links that only resolve inside the code
   interpreter sandbox and dead-end at the portal origin. The real download is the artifact
