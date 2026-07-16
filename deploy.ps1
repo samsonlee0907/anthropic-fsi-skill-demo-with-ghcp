@@ -252,7 +252,7 @@ $fsiMcpKey = & (Join-Path $repo 'scripts\set_azd_env_from_infra.ps1') `
     -ProjectEndpoint $projectEndpoint -StorageBlobEndpoint $storageBlob `
     -ProjectId $projectId `
     -ModelDeploymentName $ModelDeploymentName -SecEdgarMcpUrl $secMcpUrl `
-    -FsiMcpKey $fsiMcpKey -EnvName $EnvName -AzdDir $azdDir | Select-Object -Last 1
+    -FsiMcpKey $fsiMcpKey -EnvName $EnvName -AzdDir $azdDir -ResourceGroup $rg | Select-Object -Last 1
 Push-Location $azdDir
 $azSub = az account show --query id -o tsv 2>$null
 azd env set AZURE_SUBSCRIPTION_ID $azSub | Out-Null

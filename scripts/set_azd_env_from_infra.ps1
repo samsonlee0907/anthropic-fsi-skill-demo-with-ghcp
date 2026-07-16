@@ -22,6 +22,8 @@ param(
     [string]$SecEdgarMcpUrl = '',
     [string]$FsiMcpKey = '',
     [string]$EnvName = 'fsi-demo',
+    [string]$ResourceGroup = '',
+    [string]$SecEdgarAppName = 'ca-secedgar-mcp',
     [string]$AzdDir = (Join-Path $PSScriptRoot '..\agents\hosted\_azd')
 )
 
@@ -53,6 +55,31 @@ try {
         azd env new $EnvName --no-prompt | Out-Null
     }
     azd env select $EnvName | Out-Null
+
+    # --- SEC EDGAR var resolution (preserve + auto-discover) -----------------
+    # Never wipe a previously-good SEC_EDGAR_MCP_URL / FSI_MCP_KEY. If the caller
+    # did not pass them (blank), fall back to the value already in the azd env,
+    # then — if a resource group is known — auto-discover them from the deployed
+    # SEC EDGAR MCP container app. This stops re-runs from silently dropping the
+    # SEC toolbox binding (see docs/runbook.md §8 "SEC EDGAR toolbox drift").
+    if (-not $SecEdgarMcpUrl -or -not $FsiMcpKey) {
+        foreach ($line in @(azd env get-values 2>$null)) {
+            if (-not $SecEdgarMcpUrl -and $line -match '^SEC_EDGAR_MCP_URL="?(.+?)"?$') { $SecEdgarMcpUrl = $Matches[1] }
+            if (-not $FsiMcpKey -and $line -match '^FSI_MCP_KEY="?(.+?)"?$') { $FsiMcpKey = $Matches[1] }
+        }
+    }
+    if ((-not $SecEdgarMcpUrl -or -not $FsiMcpKey) -and $ResourceGroup) {
+        $fqdn = az containerapp show -n $SecEdgarAppName -g $ResourceGroup `
+            --query 'properties.configuration.ingress.fqdn' -o tsv 2>$null
+        if ($fqdn) {
+            if (-not $SecEdgarMcpUrl) { $SecEdgarMcpUrl = "https://$fqdn/mcp" }
+            if (-not $FsiMcpKey) {
+                $FsiMcpKey = az containerapp show -n $SecEdgarAppName -g $ResourceGroup `
+                    --query "properties.template.containers[0].env[?name=='FSI_MCP_KEY']|[0].value" -o tsv 2>$null
+            }
+            Write-Host "  [auto] discovered SEC EDGAR MCP from '$SecEdgarAppName' in '$ResourceGroup'"
+        }
+    }
 
     if (-not $FsiMcpKey -and $SecEdgarMcpUrl) {
         # Generate a 32-byte URL-safe shared secret for the SEC MCP header.

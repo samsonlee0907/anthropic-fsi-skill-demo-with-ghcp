@@ -238,7 +238,11 @@ try {
         Invoke-Azd -Args $connArgs -What 'connection create sec-edgar' | Out-Null
         Write-Host "  [OK] connection sec-edgar -> $SecEdgarMcpUrl"
     } else {
-        Write-Host "== SEC EDGAR connection OMITTED (no -SecEdgarMcpUrl) ==" -ForegroundColor DarkGray
+        Write-Host "== SEC EDGAR connection OMITTED (no SEC_EDGAR_MCP_URL) ==" -ForegroundColor Yellow
+        Write-Host "   Toolboxes will be published WITHOUT SEC grounding (web search only)." -ForegroundColor Yellow
+        Write-Host "   To (re)bind: set SEC_EDGAR_MCP_URL + FSI_MCP_KEY in the azd env (or pass" -ForegroundColor Yellow
+        Write-Host "   -SecEdgarMcpUrl/-FsiMcpKey) and re-run. set_azd_env_from_infra.ps1 -ResourceGroup <rg>" -ForegroundColor Yellow
+        Write-Host "   auto-discovers both from the deployed 'ca-secedgar-mcp' app." -ForegroundColor Yellow
     }
 
     # -----------------------------------------------------------------------

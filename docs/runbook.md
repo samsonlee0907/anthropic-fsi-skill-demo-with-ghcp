@@ -268,6 +268,16 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   Container App; the Foundry gateway injects the shared-secret header (`x-fsi-mcp-key`).
   Toggle by setting/clearing `SEC_EDGAR_MCP_URL`. Upstream `sec-edgar-mcp` is AGPL-3.0 —
   review licensing before commercial redistribution.
+- **SEC EDGAR toolbox drift:** `provision_foundry.ps1` binds the `sec-edgar` connection into each
+  toolbox only when `SEC_EDGAR_MCP_URL` is set. Re-running it (or `set_azd_env_from_infra.ps1`)
+  with a **blank** `SEC_EDGAR_MCP_URL` used to silently republish the toolboxes *without* SEC
+  grounding while leaving the connection orphaned. Guards now prevent this:
+  `set_azd_env_from_infra.ps1` never overwrites a good `SEC_EDGAR_MCP_URL`/`FSI_MCP_KEY` with a
+  blank (it preserves the existing azd-env value) and, given `-ResourceGroup <rg>`, auto-discovers
+  both from the deployed `ca-secedgar-mcp` app; `provision_foundry.ps1` prints a loud warning when
+  it omits SEC. Verify the binding any time with
+  `azd ai toolbox show tb-ib-pitch -e <env>` — the `TOOL` list should include a `sec-edgar` `mcp`
+  row (`connection:.../connections/sec-edgar`), not just `web` + `tool_search`.
 - **Transient model errors:** heavy single prompts (deep SEC retrieval + full multi-sheet
   DCF) can 408-timeout at the model layer (~360s). The BFF mitigates with one retry, one
   corrective artifact turn, and finally a **type-correct** fallback so the portal always has a
