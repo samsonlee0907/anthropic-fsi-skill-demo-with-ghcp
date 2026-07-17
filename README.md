@@ -147,6 +147,25 @@ of driving `deploy.ps1` yourself, you can let Copilot run it for you:
    agents → RBAC → api/portal → validate) and stops to ask when it needs input (e.g.
    `-PrincipalId` under a Conditional Access challenge).
 
+### Load Skills into GitHub Copilot
+
+Need FSI help without Azure provisioning, hosted agents, or the portal? Use the same
+financial-analysis skills directly in an agentic GitHub Copilot surface. The
+[FSI skill bootstrap and routing contract](.github/fsi-skill-bootstrap-and-routing.md) directs
+Copilot to copy the approved Apache-2.0 upstream skill directories into local
+`.github/skills/fsi-*` directories, retain attribution, and route them only to FSI work.
+
+1. Open this repository in GitHub Copilot CLI or VS Code agent mode.
+2. Prompt Copilot, for example:
+   > *"Install the local FSI skills, then build an investment-banking DCF workbook for a public
+   > company."*
+3. Copilot follows the contract: it uses only the narrowest relevant `fsi-*` skill and asks for
+   confirmation when the request's FSI context is ambiguous.
+
+This is a local Copilot workflow, not a Foundry deployment. It does not provision Azure resources
+or include the hosted stack's governed toolboxes, live SEC EDGAR MCP connection, or portal artifact
+delivery.
+
 To scaffold or extend the **Foundry toolbox / hosted agent** wiring with Copilot, install the
 GA [GitHub Copilot for Azure](https://learn.microsoft.com/en-us/azure/developer/github-copilot-azure/introduction)
 `microsoft-foundry` skill — its

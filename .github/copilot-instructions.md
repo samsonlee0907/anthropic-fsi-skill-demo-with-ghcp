@@ -5,6 +5,14 @@ This repo is a reusable pattern for building **scenario-based Financial-Services
 [`financial-analysis` skills](https://github.com/anthropics/financial-services/tree/main/plugins/vertical-plugins/financial-analysis/skills)
 into Foundry skills + toolboxes, fronted by a FastAPI BFF and a Next.js portal on Azure Container Apps.
 
+## Lightweight local Copilot path
+
+When a user wants to use the FSI skills directly in GitHub Copilot instead of deploying the
+Foundry stack, follow [FSI skill bootstrap and routing](fsi-skill-bootstrap-and-routing.md).
+It defines the approved upstream source, local `.github/skills/fsi-*` intake contract, licensing
+requirements, and FSI-only routing policy. Do not apply that local-skill path to an ordinary
+non-FSI spreadsheet, presentation, or document request.
+
 Use this file to help a user provision and deploy the whole asset end-to-end and get the same result
 that is documented in `docs/runbook.md`. Prefer official Microsoft Foundry and Azure documentation and
 the vendor repos linked below over guesswork.
