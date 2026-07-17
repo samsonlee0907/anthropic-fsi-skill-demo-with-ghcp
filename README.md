@@ -162,9 +162,49 @@ Copilot to copy the approved Apache-2.0 upstream skill directories into local
 3. Copilot follows the contract: it uses only the narrowest relevant `fsi-*` skill and asks for
    confirmation when the request's FSI context is ambiguous.
 
+#### Visual walkthrough
+
+The following example uses an investment-banking pitch task. The same flow applies to the narrowest
+relevant local FSI skill for valuation, financial reporting, insurance, lending, or other
+regulated-finance work.
+
+1. **Start with the bootstrap instruction.** Ask Copilot to load the local FSI skills and then
+   state a clearly FSI-scoped task. Copilot installs the catalog under `.github/skills/`, retaining
+   the Apache-2.0 license and the local `fsi-*` scope.
+
+   <img src="docs/images/ghcp-fsi-skills-01-start-instruction.png" alt="GitHub Copilot receives an FSI investment-banking pitch task after installing the scoped local skills." width="1000">
+
+2. **Confirm the skill installation.** Copilot reports the installed local skill directories and
+   can inspect a renamed `SKILL.md` manifest to show the FSI-only scope prefix and preserved
+   upstream content.
+
+   <img src="docs/images/ghcp-fsi-skills-02-skills-loading.png" alt="GitHub Copilot confirms all local FSI skills are installed and inspects a scoped skill manifest." width="1000">
+
+3. **Provide the client or deal workflow.** Give a specific FSI deliverable, such as a
+   client-ready investment-banking deck, valuation workbook, or insurance-pricing model.
+
+   <img src="docs/images/ghcp-fsi-skills-03-provide-task.png" alt="A client-ready Microsoft investment-banking pitch deck generated through the local FSI skill workflow." width="1000">
+
+4. **Inspect skill use when needed.** Copilot can show the selected skill manifests, local
+   changes, source-parity checks, and FSI-scoping checks rather than treating the skills as a
+   black box.
+
+   <img src="docs/images/ghcp-fsi-skills-04-inspect-skill-usage.png" alt="GitHub Copilot validates local FSI skill source parity, frontmatter, licensing, and routing policy." width="1000">
+
+5. **Run artifact quality control.** For a client-facing deck or workbook, ask Copilot to perform
+   the applicable domain QC pass before delivering the file.
+
+   <img src="docs/images/ghcp-fsi-skills-05-agent-harness-qc.png" alt="GitHub Copilot runs investment-banking deck quality checks and renders the generated slides for review." width="1000">
+
+6. **Review the resulting deliverable.** Use the generated Office artifact and accompanying
+   sources or methodology notes as the local Copilot outcome.
+
+   <img src="docs/images/ghcp-fsi-skills-06-outcome-example.png" alt="GitHub Copilot renders the local FSI skill bootstrap and routing instructions used by the workflow." width="1000">
+
 This is a local Copilot workflow, not a Foundry deployment. It does not provision Azure resources
 or include the hosted stack's governed toolboxes, live SEC EDGAR MCP connection, or portal artifact
-delivery.
+delivery. The example's public-market research depends on the tools available in the user's Copilot
+surface; it does not install or deploy the self-hosted SEC EDGAR MCP server.
 
 To scaffold or extend the **Foundry toolbox / hosted agent** wiring with Copilot, install the
 GA [GitHub Copilot for Azure](https://learn.microsoft.com/en-us/azure/developer/github-copilot-azure/introduction)
