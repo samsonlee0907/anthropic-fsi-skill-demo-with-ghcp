@@ -13,12 +13,13 @@
     Called by deploy.ps1. Can also be run standalone once you have the infra
     outputs (e.g. from `azd env get-value AZURE_AI_PROJECT_ENDPOINT`).
 #>
+#Requires -Version 7.0
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ProjectEndpoint,
     [Parameter(Mandatory = $true)][string]$StorageBlobEndpoint,
     [string]$ProjectId = '',
-    [string]$ModelDeploymentName = 'gpt-5.4',
+    [Parameter(Mandatory = $true)][string]$ModelDeploymentName,
     [string]$SecEdgarMcpUrl = '',
     [string]$FsiMcpKey = '',
     [string]$EnvName = 'fsi-demo',
@@ -53,8 +54,10 @@ try {
     if (-not $exists) {
         Write-Host "Creating azd environment '$EnvName' in $AzdDir"
         azd env new $EnvName --no-prompt | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not create azd environment '$EnvName'." }
     }
     azd env select $EnvName | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not select azd environment '$EnvName'." }
 
     # --- SEC EDGAR var resolution (preserve + auto-discover) -----------------
     # Never wipe a previously-good SEC_EDGAR_MCP_URL / FSI_MCP_KEY. If the caller
@@ -64,8 +67,8 @@ try {
     # SEC toolbox binding (see docs/runbook.md §8 "SEC EDGAR toolbox drift").
     if (-not $SecEdgarMcpUrl -or -not $FsiMcpKey) {
         foreach ($line in @(azd env get-values 2>$null)) {
-            if (-not $SecEdgarMcpUrl -and $line -match '^SEC_EDGAR_MCP_URL="?(.+?)"?$') { $SecEdgarMcpUrl = $Matches[1] }
-            if (-not $FsiMcpKey -and $line -match '^FSI_MCP_KEY="?(.+?)"?$') { $FsiMcpKey = $Matches[1] }
+            if (-not $SecEdgarMcpUrl -and $line -match '^SEC_EDGAR_MCP_URL=(.*)$') { $SecEdgarMcpUrl = $Matches[1].Trim('"') }
+            if (-not $FsiMcpKey -and $line -match '^FSI_MCP_KEY=(.*)$') { $FsiMcpKey = $Matches[1].Trim('"') }
         }
     }
     if ((-not $SecEdgarMcpUrl -or -not $FsiMcpKey) -and $ResourceGroup) {
@@ -75,9 +78,17 @@ try {
             if (-not $SecEdgarMcpUrl) { $SecEdgarMcpUrl = "https://$fqdn/mcp" }
             if (-not $FsiMcpKey) {
                 $FsiMcpKey = az containerapp show -n $SecEdgarAppName -g $ResourceGroup `
-                    --query "properties.template.containers[0].env[?name=='FSI_MCP_KEY']|[0].value" -o tsv 2>$null
+                    --query "properties.template.containers[0].env[?name=='FSI_MCP_KEY'].value" -o tsv 2>$null
             }
             Write-Host "  [auto] discovered SEC EDGAR MCP from '$SecEdgarAppName' in '$ResourceGroup'"
+        }
+    }
+
+    if ($SecEdgarMcpUrl) {
+        $mcpUri = $null
+        if (-not [Uri]::TryCreate($SecEdgarMcpUrl, [UriKind]::Absolute, [ref]$mcpUri) -or
+            $mcpUri.Scheme -ne 'https' -or -not $mcpUri.Host) {
+            throw 'SEC_EDGAR_MCP_URL must be an absolute HTTPS URL.'
         }
     }
 
@@ -90,6 +101,7 @@ try {
 
     $vars = [ordered]@{
         FOUNDRY_PROJECT_ENDPOINT       = $ProjectEndpoint
+        AZURE_AI_PROJECT_ENDPOINT     = $ProjectEndpoint
         AZURE_AI_PROJECT_ID            = $ProjectId
         AZURE_AI_MODEL_DEPLOYMENT_NAME = $ModelDeploymentName
         TOOLBOX_ENDPOINT_EQUITY        = (Get-ToolboxEndpoint 'tb-equity-research')
@@ -104,6 +116,7 @@ try {
         $v = $vars[$k]
         if ($null -eq $v) { $v = '' }
         azd env set $k $v | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Could not set azd variable '$k' for '$EnvName'." }
         $shown = if ($k -eq 'FSI_MCP_KEY' -and $v) { '***' } else { $v }
         Write-Host ("  {0,-32} = {1}" -f $k, $shown)
     }

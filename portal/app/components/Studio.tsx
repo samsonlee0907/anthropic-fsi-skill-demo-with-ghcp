@@ -3,9 +3,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { consumeSseStream, type RunEvent } from '../lib/sse';
+import { consumeSseStream, type EnrichmentSource, type RunEvent } from '../lib/sse';
+import { nextRunStatus, suggestedNewsQuery, webiqHeaders, type OverallStatus } from '../lib/run-state';
+import { fetchArtifact } from '../lib/artifacts';
+import { DeploymentMetadata } from './DeploymentMetadata';
+import { SourceCitation } from './SourceCitation';
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? '';
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_URL ?? '').replace(/\/+$/, '');
 
 type ScenarioKey = 'equity-research' | 'ib-pitch' | 'pe-lbo';
 
@@ -29,12 +33,15 @@ type Toolbox = {
 type HealthResponse = {
   status: string;
   project_endpoint: string;
+  environment_name?: string | null;
+  model_deployment_name?: string | null;
 };
 
 type Artifact = {
   id: string;
   filename: string;
   url: string;
+  kind?: 'generated' | 'summary';
 };
 
 type Activity = {
@@ -61,8 +68,6 @@ type RunMeta = {
   toolbox: string;
 };
 
-type OverallStatus = 'idle' | 'running' | 'complete' | 'error';
-
 type ScenariosResponse = {
   scenarios: Scenario[];
 };
@@ -75,6 +80,7 @@ const workflowLabels: Record<OverallStatus, string> = {
   idle: 'Ready',
   running: 'Running',
   complete: 'Complete',
+  partial: 'Partial result',
   error: 'Attention needed'
 };
 
@@ -94,7 +100,17 @@ export function Studio() {
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [finishedAt, setFinishedAt] = useState<number | null>(null);
   const [clock, setClock] = useState(Date.now());
+  const [webiqQuery, setWebiqQuery] = useState('');
+  // Held only in component memory: never persisted to storage, cookies, URLs or logs.
+  const [webiqKey, setWebiqKey] = useState('');
+  const [showWebiqKey, setShowWebiqKey] = useState(false);
+  const [webiqFailed, setWebiqFailed] = useState(false);
+  const [webiqNote, setWebiqNote] = useState('');
+  const [sources, setSources] = useState<EnrichmentSource[]>([]);
+  const [warnings, setWarnings] = useState<string[]>([]);
+  const [statusMessage, setStatusMessage] = useState('');
   const abortRef = useRef<AbortController | null>(null);
+  const outcomeRef = useRef<OverallStatus>('idle');
 
   const selectedScenario = useMemo(
     () => scenarios.find((scenario) => scenario.key === selectedKey) ?? null,
@@ -161,11 +177,16 @@ export function Studio() {
 
   function selectScenario(scenario: Scenario) {
     setSelectedKey(scenario.key);
-    setPrompt(scenario.default_prompt);
+    updatePrompt(scenario.default_prompt);
     setRunError(null);
   }
 
-  async function runWorkflow() {
+  function updatePrompt(value: string) {
+    setPrompt(value);
+    setWebiqQuery('');
+  }
+
+  async function runWorkflow(withoutWebiq = false) {
     if (!selectedScenario || isRunning) {
       return;
     }
@@ -182,19 +203,35 @@ export function Studio() {
     setStartedAt(startTime);
     setFinishedAt(null);
     setClock(startTime);
+    outcomeRef.current = 'running';
+    setWebiqFailed(false);
+    setWebiqNote('');
+    setSources([]);
+    setWarnings([]);
+    setStatusMessage('Connecting to the backend...');
 
     try {
+      if (!withoutWebiq && webiqQuery.trim() && !webiqKey.trim()) {
+        throw new Error('This explicit news query requires a WebIQ API key. Enter a key or clear the news query. No request was sent.');
+      }
+      const extraHeaders = webiqHeaders(withoutWebiq || !webiqQuery.trim() ? '' : webiqKey, API_BASE_URL, window.location.href);
+      const usingWebiq = Boolean(extraHeaders['X-WebIQ-Key']);
+      if (usingWebiq && (!webiqQuery.trim() || webiqQuery.trim().length > 500)) {
+        throw new Error('Enter a WebIQ news query for the company in your mandate (up to 500 characters).');
+      }
       await consumeSseStream<RunEvent>(
         `${API_BASE_URL}/api/run`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Accept: 'text/event-stream'
+            Accept: 'text/event-stream',
+            ...extraHeaders
           },
           body: JSON.stringify({
             scenario: selectedScenario.key,
-            message: prompt.trim() || undefined
+            message: prompt.trim() || undefined,
+            ...(usingWebiq ? { webiq_query: webiqQuery.trim() } : {})
           }),
           signal: controller.signal
         },
@@ -207,6 +244,10 @@ export function Studio() {
 
       setRunError(getErrorMessage(error, 'The workflow stream stopped unexpectedly.'));
       setOverallStatus('error');
+      setStatusMessage('The workflow could not complete. Review the error before starting another run.');
+      setAgentRuns((agents) => agents.map((agent) => agent.status === 'running'
+        ? { ...agent, status: 'error', error: 'The connection stopped. The remote run may still be active.' }
+        : agent));
       setFinishedAt(Date.now());
     } finally {
       if (!controller.signal.aborted) {
@@ -217,6 +258,8 @@ export function Studio() {
   }
 
   function handleRunEvent(event: RunEvent) {
+    outcomeRef.current = nextRunStatus(outcomeRef.current, event);
+    setOverallStatus(outcomeRef.current === 'partial' && event.type !== 'done' ? 'running' : outcomeRef.current);
     switch (event.type) {
       case 'status':
         if (event.title) {
@@ -230,7 +273,22 @@ export function Studio() {
             )
           );
         }
-        setOverallStatus('running');
+        setStatusMessage({
+          start: 'Starting the scenario.',
+          submitting: 'Submitting the hosted-agent request.',
+          working: 'Waiting for the hosted agent. Intermediate tool activity is unavailable.',
+          retrying: 'Retrying the agent after a timeout or rate limit.',
+          ensuring_artifact: 'Attempting to recover the missing workbook or deck.',
+          webiq_search: 'Preparing optional WebIQ enrichment before starting the agent.'
+        }[event.stage]);
+        break;
+      case 'enrichment':
+        setWebiqNote(event.message);
+        setSources(event.sources);
+        setWebiqFailed(event.status === 'failed');
+        break;
+      case 'warning':
+        setWarnings((current) => current.includes(event.message) ? current : [...current, event.message]);
         break;
       case 'agent_start':
         upsertAgent(event.agent, (agent) => ({
@@ -270,10 +328,11 @@ export function Studio() {
         break;
       case 'artifact':
         if (!event.id || !event.url) {
+          setWarnings((current) => [...current, `Could not publish ${event.filename}. Please retry the workflow.`]);
           break;
         }
         {
-          const artifact: Artifact = { id: event.id, filename: event.filename, url: event.url };
+          const artifact: Artifact = { id: event.id, filename: event.filename, url: event.url, kind: event.kind };
           upsertAgent(event.agent, (agent) => ({
             ...agent,
             artifacts: agent.artifacts.some((existing) => existing.id === artifact.id)
@@ -291,7 +350,6 @@ export function Studio() {
           }));
         } else {
           setRunError(event.message);
-          setOverallStatus('error');
         }
         break;
       case 'agent_end':
@@ -301,9 +359,10 @@ export function Studio() {
         }));
         break;
       case 'done':
-        setOverallStatus('complete');
         setFinishedAt(Date.now());
-        setIsRunning(false);
+        setStatusMessage(outcomeRef.current === 'complete' ? 'Workflow complete.' :
+          outcomeRef.current === 'partial' ? 'Workflow finished with a partial result. Review the warnings.' :
+          'Workflow failed. Review the error before retrying.');
         break;
     }
   }
@@ -366,6 +425,8 @@ export function Studio() {
           <aside className="heroPanel" aria-label="Run readiness">
             <span className={`runBadge ${overallStatus}`}>{workflowLabels[overallStatus]}</span>
             <dl>
+              <DeploymentMetadata environmentName={health?.environment_name}
+                modelDeploymentName={health?.model_deployment_name} />
               <div>
                 <dt>Runtime</dt>
                 <dd>{startedAt ? formatElapsed(elapsedMs) : '00:00'}</dd>
@@ -399,6 +460,8 @@ export function Studio() {
                     className={`scenarioCard ${scenario.key === selectedKey ? 'selected' : ''}`}
                     key={scenario.key}
                     onClick={() => selectScenario(scenario)}
+                    disabled={isRunning}
+                    aria-pressed={scenario.key === selectedKey}
                     type="button"
                   >
                     <span className="scenarioTitleRow">
@@ -462,7 +525,7 @@ export function Studio() {
                     className="presetButton"
                     type="button"
                     disabled={isRunning}
-                    onClick={() => setPrompt(selectedScenario.default_prompt)}
+                    onClick={() => updatePrompt(selectedScenario.default_prompt)}
                   >
                     Default (Microsoft)
                   </button>
@@ -471,7 +534,7 @@ export function Studio() {
                       className="presetButton edgarPreset"
                       type="button"
                       disabled={isRunning}
-                      onClick={() => setPrompt(selectedScenario.edgar_prompt ?? '')}
+                      onClick={() => updatePrompt(selectedScenario.edgar_prompt ?? '')}
                       title="Loads the same workflow for a different real public company, sourced from SEC EDGAR filings"
                     >
                       🏛️ Try another company
@@ -481,13 +544,40 @@ export function Studio() {
                 <textarea
                   id="workflow-prompt"
                   value={prompt}
-                  onChange={(event) => setPrompt(event.target.value)}
+                  onChange={(event) => updatePrompt(event.target.value)}
+                  disabled={isRunning}
                   placeholder="Describe the client objective, constraints, and desired deliverables."
                   rows={9}
                 />
+                <details className="webiqConfig">
+                  <summary>
+                    Optional WebIQ news enrichment
+                    <span className="webiqState">{webiqKey.trim() ? ' — key entered (not verified)' : ' — no key entered'}</span>
+                  </summary>
+                  <p>A key alone never starts a search: WebIQ is called only when you also enter a news query and run this workflow. Leave the query blank for no WebIQ calls. SEC EDGAR and toolbox web search remain available without it.</p>
+                  <label htmlFor="webiq-key">WebIQ API key</label>
+                  <div className="webiqKeyRow">
+                    <input id="webiq-key" type={showWebiqKey ? 'text' : 'password'} value={webiqKey}
+                      onChange={(event) => setWebiqKey(event.target.value)}
+                      disabled={isRunning} maxLength={4096} autoComplete="off" autoCorrect="off"
+                      autoCapitalize="none" spellCheck={false} aria-describedby="webiq-key-privacy" />
+                    <button className="presetButton" type="button" aria-pressed={showWebiqKey}
+                      onClick={() => setShowWebiqKey((value) => !value)}>{showWebiqKey ? 'Hide key' : 'Show key'}</button>
+                    <button className="presetButton" type="button" disabled={isRunning}
+                      onClick={() => { setWebiqKey(''); setShowWebiqKey(false); }}>Clear key</button>
+                  </div>
+                  <p id="webiq-key-privacy">Kept only in this tab&apos;s memory and sent to the backend in a request header for that run. Never saved to browser storage, cookies, URLs or run history; reloading the page clears it.</p>
+                  <label htmlFor="webiq-query">News query — confirm it matches the company in your mandate</label>
+                  <input id="webiq-query" value={webiqQuery}
+                    onChange={(event) => setWebiqQuery(event.target.value)}
+                    disabled={isRunning} maxLength={500}
+                    placeholder={suggestedNewsQuery(prompt) || 'Company name or ticker and recent news topic'} />
+                  <p>Only this query is sent to WebIQ, not your full mandate. Editing the mandate resets the query;
+                    prompts without an explicit ticker require you to enter it. Retrieved passages are untrusted context.</p>
+                </details>
                 <div className="composerActions">
                   <p>AI-generated from public SEC filings and web sources — not investment advice.</p>
-                  <button className="primaryButton" disabled={isRunning} onClick={runWorkflow} type="button">
+                  <button className="primaryButton" disabled={isRunning} onClick={() => runWorkflow()} type="button">
                     {isRunning ? (
                       <>
                         <span className="buttonSpinner" aria-hidden="true" /> Workflow running…
@@ -495,7 +585,7 @@ export function Studio() {
                     ) : agentRuns.length > 0 ? (
                       'Start a new run'
                     ) : (
-                      'Run multi-agent workflow'
+                      'Run scenario workflow'
                     )}
                   </button>
                 </div>
@@ -508,6 +598,13 @@ export function Studio() {
             )}
 
             {runError ? <Alert tone="error" title="Workflow error" message={runError} /> : null}
+            {webiqFailed && !isRunning ? (
+              <button type="button" className="presetButton" onClick={() => {
+                setWebiqKey('');
+                setShowWebiqKey(false);
+                runWorkflow(true);
+              }}>Clear key and run without WebIQ</button>
+            ) : null}
           </section>
 
           <aside className="toolboxPanel" aria-labelledby="toolboxes-title">
@@ -541,13 +638,26 @@ export function Studio() {
           </aside>
         </div>
 
-        <section className="timelineSection" aria-labelledby="timeline-title" aria-live="polite">
+        <section className="timelineSection" aria-labelledby="timeline-title">
+          <p role="status" aria-live="polite">{statusMessage}</p>
+          {webiqNote ? <p className="webiqNotice">{webiqNote}</p> : null}
+          {warnings.map((warning) => <div className="warningNotice" key={warning} role="status">{warning}</div>)}
+          {sources.length > 0 ? (
+            <details className="sourceList">
+              <summary>WebIQ sources retrieved ({sources.length}) — untrusted enrichment</summary>
+              <ul>{sources.map((source) => (
+                <li key={source.id}>
+                  <SourceCitation source={source} />
+                </li>
+              ))}</ul>
+            </details>
+          ) : null}
           <div className="sectionHeading compact">
             <div>
               <h2 id="timeline-title">Agent timeline</h2>
               <p>
                 {runMeta
-                  ? `${runMeta.title} is loading its skills and streaming the scenario agent's output.`
+                  ? `${runMeta.title}: status updates appear while running; narrative output arrives when complete.`
                   : 'Run events will appear here as the scenario agent starts, streams, and completes.'}
               </p>
             </div>
@@ -561,7 +671,7 @@ export function Studio() {
             {agentRuns.length === 0 ? (
               <div className="timelineEmpty">
                 <strong>No agent events yet.</strong>
-                <p>When the workflow starts, the scenario agent's output and artifacts will stream into this timeline.</p>
+                <p>Status updates appear while running. The narrative and artifacts arrive when the agent finishes.</p>
               </div>
             ) : (
               agentRuns.map((agentRun) => <AgentCard agentRun={agentRun} key={agentRun.agent} />)
@@ -606,8 +716,10 @@ function AgentCard({ agentRun }: { agentRun: AgentRun }) {
       ) : null}
 
       {agentRun.output.trim().length > 0 ? (
-        <div className="agentOutput markdownBody">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{agentRun.output}</ReactMarkdown>
+        <div className="agentOutput markdownBody" tabIndex={0} aria-label={`${agentRun.label} analysis`}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={{
+            a: ({ children, href }) => <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+          }}>{agentRun.output}</ReactMarkdown>
         </div>
       ) : agentRun.status === 'running' ? (
         <div className="agentOutput agentOutputEmpty">
@@ -623,14 +735,46 @@ function AgentCard({ agentRun }: { agentRun: AgentRun }) {
       {agentRun.artifacts.length > 0 ? (
         <div className="artifactRow" aria-label={`${agentRun.label} artifacts`}>
           {agentRun.artifacts.map((artifact) => (
-            <a className="artifactChip" download href={`${API_BASE_URL}${artifact.url}`} key={artifact.id}>
-              <span aria-hidden="true">▣</span>
-              {artifact.filename}
-            </a>
+            <ArtifactDownload artifact={artifact} key={artifact.id} />
           ))}
         </div>
       ) : null}
     </article>
+  );
+}
+
+function ArtifactDownload({ artifact }: { artifact: Artifact }) {
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState('');
+
+  async function download() {
+    setDownloading(true);
+    setError('');
+    try {
+      const blob = await fetchArtifact(API_BASE_URL, artifact.url);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = artifact.filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (reason) {
+      setError(getErrorMessage(reason, 'Download failed. Please retry.'));
+    } finally {
+      setDownloading(false);
+    }
+  }
+
+  return (
+    <div className="artifactDownload">
+      <button className="artifactChip" type="button" disabled={downloading} onClick={download}>
+        {downloading ? 'Downloading...' : artifact.kind === 'summary' ? 'Download summary only: ' : 'Download: '}
+        {artifact.filename}
+      </button>
+      {error ? <p role="alert">{error} Click the download button to retry.</p> : null}
+    </div>
   );
 }
 

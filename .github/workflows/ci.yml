@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: API tests
+        env:
+          PROJECT_ENDPOINT: https://example.services.ai.azure.com/api/projects/ci
+          STORAGE_BLOB_ENDPOINT: https://example.blob.core.windows.net
+        run: |
+          python -m venv .venv-api
+          .venv-api/bin/pip install -q -r api/requirements.txt
+          .venv-api/bin/python -m unittest api.tests.test_webiq api.tests.test_run_flow
+      - name: SEC EDGAR MCP tests
+        run: |
+          python -m venv .venv-mcp
+          .venv-mcp/bin/pip install -q -r agents/mcp/sec-edgar/requirements.txt pytest httpx
+          .venv-mcp/bin/python -m pytest -q agents/mcp/sec-edgar/tests
+      - name: Script tests
+        run: python -m unittest scripts.tests.test_validate_cors
+      - name: Hosted runtime contract and agent-src mirror
+        run: python agents/hosted/tests/test_runtime_contract.py
+
+  portal:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: portal
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: portal/package-lock.json
+      - run: npm ci
+      - run: npm test
+      # next build generates .next/types, which next-env.d.ts references, so typecheck after it.
+      - run: npm run build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: https://api.example.test
+          NEXT_TELEMETRY_DISABLED: '1'
+      - run: npm run typecheck
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:browser
+
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bicep build
+        run: |
+          az bicep install
+          az bicep build --file infra/main.bicep --stdout > /dev/null

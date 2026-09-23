@@ -161,12 +161,14 @@ if ($SkipOffice) {
     $base = ($base -replace '[^A-Za-z0-9._-]', '-')
     Write-Host "  rendering $($f.Name)..."
     try {
-      $renderArgs = @(
-        '-InputFile', $f.FullName,
-        '-OutDir', $OutDir,
-        '-BaseName', $base
-      )
-      if ($kind -eq 'pptx') { $renderArgs += @('-MaxSlides', '3') }
+      # Hashtable splatting binds by name; array splatting of '-Name' strings binds
+      # positionally in some PowerShell versions.
+      $renderArgs = @{
+        InputFile = $f.FullName
+        OutDir    = $OutDir
+        BaseName  = $base
+      }
+      if ($kind -eq 'pptx') { $renderArgs.MaxSlides = 3 }
       $produced = @(
         (& $officeScript @renderArgs) |
         ForEach-Object { [string]$_ } |

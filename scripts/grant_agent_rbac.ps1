@@ -20,6 +20,7 @@
     To find an agent's principal id if discovery misses it, log the storage-token
     `oid` from the container and pass it here (see docs/runbook.md, RBAC section).
 #>
+#Requires -Version 7.0
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ResourceGroup,

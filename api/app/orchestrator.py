@@ -16,8 +16,8 @@ and strips the sentinel lines from the text shown to the user.
 Progress UX: because a background run does not expose partial output (the stored
 response's ``output`` stays empty until completion, and code_interpreter items are
 stripped from the outer response), the BFF cannot forward a real token stream. To
-avoid a static spinner it emits ``activity`` SSE events in two ways: time-based
-lifecycle *phases* while the run is in flight, and the REAL tool calls (governed
+avoid a static spinner it emits ``activity`` SSE events in two ways: elapsed-time
+waiting notices while the run is in flight, and the REAL tool calls (governed
 skill loads + SEC EDGAR MCP calls) parsed from the completed payload.
 """
 import asyncio
@@ -34,6 +34,7 @@ from xml.sax.saxutils import escape
 from typing import AsyncIterator, Dict
 
 import httpx
+from azure.core.exceptions import AzureError, ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
 from azure.storage.blob import BlobServiceClient
 
@@ -104,21 +105,18 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event)}\n\n"
 
 
-# Time-based lifecycle phases surfaced as `activity` events while the background
+# Elapsed-time waiting notices surfaced as `activity` events while the background
 # run is in flight. The hosted runtime does NOT expose partial output during a
 # background run (the stored response's `output` stays empty until it completes,
 # and code_interpreter items are stripped from the outer response), so a real
-# event stream is not available mid-run. These phases give the user a visible,
-# continuously-advancing view of the typical run lifecycle instead of a static
-# "Awaiting output" spinner. Real, per-tool activities (skill loads, SEC EDGAR
+# event stream is not available mid-run. These notices confirm continued polling
+# without claiming that a particular tool has run. Real, per-tool activities (skill loads, SEC EDGAR
 # MCP calls) are emitted from the completed payload once the run finishes.
 _RUN_PHASES = (
     (0, "default", "Request accepted — the agent is starting up"),
-    (6, "function_call", "Loading governed skills from the scenario toolbox"),
-    (24, "default", "Reasoning over the company's filings and market data"),
-    (48, "code_interpreter_call", "Running the financial model in the code interpreter"),
-    (100, "code_interpreter_call", "Composing the Office artifact (workbook / deck)"),
-    (160, "default", "Finalizing the narrative and packaging the artifact"),
+    (24, "default", "Still waiting for the agent; intermediate tool activity is unavailable"),
+    (100, "default", "Analysis is still running; output will appear when the agent finishes"),
+    (160, "default", "This run is taking longer; the backend is continuing to poll"),
 )
 
 
@@ -154,8 +152,8 @@ def _activities_from_payload(payload: dict, agent_name: str) -> list:
 
     The outer Responses payload exposes function_call items (governed skill loads
     via progressive disclosure) and mcp_call items (the self-hosted SEC EDGAR
-    remote MCP tool). code_interpreter items are stripped by the host, so those
-    are covered by the time-based lifecycle phases instead.
+    remote MCP tool). code_interpreter items are stripped by the host, so their
+    execution cannot be confirmed from this payload.
     """
     out = []
     seen = set()
@@ -262,17 +260,22 @@ def _decode_artifact_id(art_id: str) -> tuple[str, str] | None:
     return fname, blobref
 
 
-def _upload_fallback_blob(fname: str, data: bytes) -> str | None:
+class ArtifactStorageUnavailable(RuntimeError):
+    pass
+
+
+def _upload_fallback_blob(fname: str, data: bytes) -> str:
     """Persist an in-memory (fallback) artifact to the artifacts container so it, too,
-    survives a replica restart. Best-effort: returns the blob reference on success, or
-    None if storage is unreachable (the caller then keeps the ephemeral local-only path)."""
+    survives a replica restart. Never advertise an ephemeral file as a durable download."""
     blobpath = f"fallback/{uuid.uuid4().hex}/{fname}"
     try:
         client = _blob_service().get_blob_client(ARTIFACTS_CONTAINER, blobpath)
         client.upload_blob(data, overwrite=True)
         return f"{ARTIFACTS_CONTAINER}/{blobpath}"
-    except Exception:  # noqa: BLE001
-        return None
+    except AzureError:
+        raise ArtifactStorageUnavailable(
+            "Artifact storage is unavailable. No durable download could be published."
+        ) from None
 
 
 def _register_artifact(fname: str, data: bytes, blobref: str | None = None) -> dict:
@@ -281,15 +284,16 @@ def _register_artifact(fname: str, data: bytes, blobref: str | None = None) -> d
     ``blobref`` is the ``<container>/<path>`` the artifact already lives at (egress
     artifacts). Fallback artifacts have no blob yet, so we upload them first. If the blob
     reference is known/created, the id is stateless and any replica can re-serve it via
-    resolve_artifact(); otherwise we degrade to an ephemeral in-process id."""
+    resolve_artifact(). Publishing fails explicitly if storage is unavailable."""
     if not blobref:
         blobref = _upload_fallback_blob(fname, data)
-    art_id = _encode_artifact_id(fname, blobref) if blobref else uuid.uuid4().hex
+    art_id = _encode_artifact_id(fname, blobref)
     dest = _ARTIFACT_DIR / f"{uuid.uuid4().hex}_{fname}"
     dest.write_bytes(data)
     media = _MEDIA.get(Path(fname).suffix.lower(), "application/octet-stream")
     ARTIFACTS[art_id] = {"path": str(dest), "filename": fname, "media_type": media}
-    return {"id": art_id, "filename": fname, "url": f"/api/artifacts/{art_id}"}
+    return {"id": art_id, "filename": fname, "url": f"/api/artifacts/{art_id}",
+            "persisted": True, "kind": "generated"}
 
 
 def resolve_artifact(art_id: str) -> dict | None:
@@ -305,8 +309,12 @@ def resolve_artifact(art_id: str) -> dict | None:
     fname, blobref = decoded
     try:
         data = _download_blob_sync(blobref)
-    except Exception:  # noqa: BLE001
+    except ResourceNotFoundError:
         return None
+    except AzureError:
+        raise ArtifactStorageUnavailable(
+            "Artifact storage is temporarily unavailable. Please retry the download."
+        ) from None
     dest = _ARTIFACT_DIR / f"{uuid.uuid4().hex}_{fname}"
     dest.write_bytes(data)
     media = _MEDIA.get(Path(fname).suffix.lower(), "application/octet-stream")
@@ -594,6 +602,12 @@ def _harvest_from_text_sync(text: str) -> tuple[str, list[dict]]:
         if not blobref:
             artifacts.append({"id": None, "filename": name, "error": "no blob path"})
             continue
+        container, _, blobpath = blobref.partition("/")
+        if (container != ARTIFACTS_CONTAINER or not blobpath or ".." in blobpath.split("/")
+                or "\\" in blobpath or Path(name).name != name or not name
+                or any(ord(char) < 32 for char in name)):
+            artifacts.append({"id": None, "filename": "artifact", "error": "invalid artifact reference"})
+            continue
         try:
             data = _download_blob_sync(blobref)
             artifacts.append(_register_artifact(name, data, blobref=blobref))
@@ -604,9 +618,11 @@ def _harvest_from_text_sync(text: str) -> tuple[str, list[dict]]:
     return clean, artifacts
 
 
-def _artifact_retry_input(scenario_key: str, message: str, previous_text: str) -> str:
+def _artifact_retry_input(
+    scenario_key: str, message: str, previous_text: str, enrichment_context: str = ""
+) -> str:
     return (
-        _build_input(scenario_key, message)
+        _build_input(scenario_key, message, enrichment_context)
         + "\n\nCORRECTIVE ARTIFACT TURN:\n"
         "The prior answer did not publish a downloadable portal artifact. It may have "
         "only mentioned a sandbox:/mnt/data link. That is not sufficient for this "
@@ -619,7 +635,7 @@ def _artifact_retry_input(scenario_key: str, message: str, previous_text: str) -
     )
 
 
-def _build_input(scenario_key: str, message: str) -> str:
+def _build_input(scenario_key: str, message: str, enrichment_context: str = "") -> str:
     return (
         f"{DISCLAIMER}\n\n"
         f"USER REQUEST:\n{message}\n\n"
@@ -646,6 +662,7 @@ def _build_input(scenario_key: str, message: str) -> str:
         "sandbox:/mnt/data download link unless code_interpreter actually ran and saved "
         "the file. (3) Then give a short summary with the headline figures only, citing "
         "the SEC filing URLs you used."
+        + (f"\n\n{enrichment_context}" if enrichment_context else "")
     )
 
 
@@ -697,7 +714,9 @@ def _poll_once_sync(base: str, response_id: str) -> dict:
     raise last_exc if last_exc else RuntimeError("poll failed with no exception")
 
 
-async def run_scenario(scenario_key: str, message: str) -> AsyncIterator[str]:
+async def run_scenario(
+    scenario_key: str, message: str, enrichment_context: str = ""
+) -> AsyncIterator[str]:
     """Async generator yielding SSE strings for a full deployed-agent run."""
     scenario = SCENARIOS.get(scenario_key)
     if not scenario:
@@ -719,11 +738,12 @@ async def run_scenario(scenario_key: str, message: str) -> AsyncIterator[str]:
     n_artifacts = 0
     clean_text = ""
     had_error = False
+    had_warning = False
     with _tracer.start_as_current_span("agent.turn") as span:
         span.set_attribute("fsi.agent", agent_name)
         span.set_attribute("fsi.role", "scenario")
         try:
-            primary_input = _build_input(scenario_key, message)
+            primary_input = _build_input(scenario_key, message, enrichment_context)
             payload = {}
             for attempt in range(2):
                 try:
@@ -768,7 +788,7 @@ async def run_scenario(scenario_key: str, message: str) -> AsyncIterator[str]:
 
             # Surface the REAL tool calls that fired during the primary run
             # (governed skill loads + SEC EDGAR MCP calls). code_interpreter items
-            # are stripped by the host, so they are represented by the phases above.
+            # are stripped by the host and cannot be confirmed from this payload.
             for _s in _activities_from_payload(payload, agent_name):
                 yield _s
 
@@ -785,7 +805,9 @@ async def run_scenario(scenario_key: str, message: str) -> AsyncIterator[str]:
                     submit = await asyncio.to_thread(
                         _submit_background_sync,
                         base,
-                        _artifact_retry_input(scenario_key, message, clean_text or raw_text),
+                        _artifact_retry_input(
+                            scenario_key, message, clean_text or raw_text, enrichment_context
+                        ),
                     )
                     rid = submit.get("id")
                     status = submit.get("status")
@@ -824,7 +846,13 @@ async def run_scenario(scenario_key: str, message: str) -> AsyncIterator[str]:
 
             if not any(art.get("id") for art in artifacts):
                 fb_name, fb_bytes = _build_fallback_artifact(scenario_key, clean_text)
-                artifacts = [_register_artifact(fb_name, fb_bytes)]
+                fallback = await asyncio.to_thread(_register_artifact, fb_name, fb_bytes)
+                fallback["kind"] = "summary"
+                artifacts = [fallback]
+                had_warning = True
+                yield _sse({"type": "warning", "agent": agent_name,
+                            "message": "The requested model/deck was not published. "
+                            "Only a narrative summary file is available; this is a partial result."})
 
             # Deliver the (sentinel-stripped) narrative as a single delta.
             if clean_text:
@@ -833,6 +861,8 @@ async def run_scenario(scenario_key: str, message: str) -> AsyncIterator[str]:
             for art in artifacts:
                 if art.get("id"):
                     n_artifacts += 1
+                else:
+                    had_warning = True
                 yield _sse({"type": "artifact", "agent": agent_name, **art})
         except Exception as e:  # noqa: BLE001
             had_error = True
@@ -844,4 +874,5 @@ async def run_scenario(scenario_key: str, message: str) -> AsyncIterator[str]:
 
     yield _sse({"type": "agent_end", "agent": agent_name})
     scenario_span.end()
-    yield _sse({"type": "done"})
+    yield _sse({"type": "done",
+                "outcome": "error" if had_error else "partial" if had_warning else "complete"})

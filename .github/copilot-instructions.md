@@ -62,17 +62,17 @@ there is no bundled synthetic dataset — agents source figures live from SEC ED
 | Path | Purpose |
 |---|---|
 | `infra/main.bicep` (+ `infra/modules/*`) | Subscription-scoped IaC: RG, Foundry account/project, models, ACR, Storage, Key Vault, App Insights, Container Apps env, RBAC, and API/portal env wiring. |
-| `deploy.ps1` | Top-level one-command orchestrator (provision infra -> SEC EDGAR -> map azd env -> skills/connection/toolboxes -> agents -> RBAC -> storage -> api/portal -> validate). `-Skip*` switches for partial re-runs. |
+| `deploy.ps1` | Top-level one-command orchestrator (provision infra -> SEC EDGAR -> map azd env -> skills/connection/toolboxes -> agents -> RBAC -> storage -> api/portal -> validate). Requires `-ModelName`, `-ModelVersion`, `-ModelCapacity` (no model default; `-ModelSku` defaults to `GlobalStandard`); optional `-DemoStoragePolicyOptOut`. `-Skip*` switches for partial re-runs. |
 | `scripts/*.ps1` | Deploy helpers: `deploy_sec_edgar.ps1`, `set_azd_env_from_infra.ps1`, `provision_foundry.ps1` (declarative `azd ai` skills + SEC connection + toolboxes), `grant_agent_rbac.ps1`, `ensure_storage_public.ps1`. |
 | `scripts/provision_foundry.ps1` | Declarative provisioning: `azd ai skill create` per skill (content fetched at runtime from a pinned Anthropic commit, `-SkillsRef`, then optionally overlaid from `skills/overrides/`), `azd ai connection create` for the SEC EDGAR remote-tool connection, and `azd ai toolbox create --from-file` + `publish` for the 3 scenario toolboxes. Replaces the retired REST scripts. |
 | `skills/overrides/` | Repo-local skill overlays that append or replace pinned upstream `SKILL.md` files without forking the vendor catalog. |
 | `agents/hosted/fsi_hosted_agent.py` | The single env-driven hosted-agent runtime for all 3 scenarios. |
 | `agents/hosted/fsi_artifact_egress.py` | `ArtifactEgressMiddleware`: harvests Code Interpreter files and uploads them to the private `artifacts` blob container, appending a `<<<ARTIFACT ...>>>` sentinel. |
 | `agents/hosted/_azd/` | `azd ai agent` project. `azure.yaml` declares the 3 services; `agent-src/` is the deployed copy of the runtime. |
-| `agents/mcp/sec-edgar/` | Dockerfile + HTTP server for the self-hosted SEC EDGAR remote MCP tool. |
-| `api/` | FastAPI BFF: invokes hosted agents (Responses background mode + poll), parses artifact sentinels, strips dead `sandbox:` links, serves `/api/artifacts/{id}`. Artifact ids are **stateless/durable** — they encode the blob reference so `/api/artifacts/{id}` re-fetches the blob via managed identity on any replica (survives scale-to-zero, new revisions, and multi-replica routing); fallback artifacts are uploaded to the `artifacts` container for the same reason. Config is fail-fast (`PROJECT_ENDPOINT`, `STORAGE_BLOB_ENDPOINT` required). Default prompts target a real public company (MSFT); no bundled dataset — figures come from SEC EDGAR + web search. |
-| `portal/` | Next.js branded portal (3 scenario tabs, streaming, artifact download). |
-| `scripts/validate.py` | Generic post-deploy validator: runs all 3 scenarios against `API_BASE_URL`, asserts downloadable OOXML. |
+| `agents/mcp/sec-edgar/` | Dockerfile + HTTP server for the self-hosted SEC EDGAR remote MCP tool, plus `financial_fact_pack.py` (the `get_financial_fact_pack` tool: normalized annual 10-K facts with accession/period/unit provenance) and its tests. |
+| `api/` | FastAPI BFF: invokes hosted agents (Responses background mode + poll), parses artifact sentinels, strips dead `sandbox:` links, serves `/api/artifacts/{id}`. Artifact ids are **stateless/durable** — they encode the blob reference so `/api/artifacts/{id}` re-fetches the blob via managed identity on any replica (survives scale-to-zero, new revisions, and multi-replica routing); fallback artifacts are uploaded to the `artifacts` container for the same reason. Config is fail-fast (`PROJECT_ENDPOINT`, `STORAGE_BLOB_ENDPOINT` required). The `done` SSE event carries `outcome` (`complete` / `partial` / `error`); a narrative-only fallback file is `kind: "summary"` and makes the run partial. Optional WebIQ enrichment (`api/app/webiq.py`) runs only when a request carries both the `X-WebIQ-Key` header and a `webiq_query`; results are passed as untrusted context and the header is redacted from telemetry. `/api/health` reports `environment_name` and `model_deployment_name`. Default prompts target a real public company (MSFT); no bundled dataset — figures come from SEC EDGAR + web search. |
+| `portal/` | Next.js branded portal (`Studio`: 3 scenario tabs, streaming, artifact download, deployment metadata, optional tab-memory-only WebIQ key + explicit news query). Unit tests in `portal/tests`, mocked-API browser tests in `portal/e2e`. |
+| `scripts/validate.py` | Generic post-deploy validator: runs all 3 scenarios against `API_BASE_URL`, asserts downloadable non-fallback OOXML; `--portal-origin <url>` also checks CORS preflights from the portal. |
 | `.env.example` | Canonical reference for every variable, grouped by phase. |
 | `docs/runbook.md` | Authoritative operations runbook -- naming, deploy, RBAC, gotchas, teardown. Read this first. |
 
@@ -81,15 +81,21 @@ there is no bundled synthetic dataset — agents source figures live from SEC ED
 The one-command path is `deploy.ps1`; always read `docs/runbook.md` before acting. It runs
 this ordered flow (each step also has a documented manual equivalent in the runbook):
 
-1. **Prerequisites.** `az login`; install `azd` with the `azure.ai.agent` capability; ensure
-   Foundry model quota in the target region. Nothing is tied to a specific subscription or
-   region — everything derives from `environmentName` (`<env>`) and `location`.
+1. **Prerequisites.** `az login`; install `azd` with the `microsoft.foundry` extension; choose
+   a model (suggested `gpt-6-astra` `2026-09-03` GlobalStandard; alternatives `gpt-6-sol` or
+   `gpt-6-luna` `2026-09-22`) and confirm availability and free quota with
+   `az cognitiveservices model list` / `az cognitiveservices usage list` (GlobalStandard quota
+   is subscription-global per model). There is no built-in model default. Nothing is tied to a
+   specific subscription or region — everything derives from `environmentName` (`<env>`),
+   `location` and the model parameters.
 2. **Provision infra** (subscription-scoped Bicep):
    ```powershell
    az deployment sub create --name fsi-<env> --location <location> `
      --template-file infra/main.bicep `
      --parameters environmentName=<env> location=<location> `
-                  developerPrincipalId=<your-object-id>
+                  developerPrincipalId=<your-object-id> `
+                  modelName=<model> modelVersion=<version> modelSku=GlobalStandard `
+                  modelCapacity=<thousands-of-TPM> agentModelDeploymentName=<model>
    ```
    A distinct `<env>` gives a fully isolated deployment (RG `rg-<env>`, all resources named
    off it).
@@ -105,7 +111,7 @@ this ordered flow (each step also has a documented manual equivalent in the runb
    **verify storage networking** (`scripts/ensure_storage_public.ps1`; see gotchas).
 8. **Build + deploy API and portal images** (`fsi-api`, `fsi-portal`; bake the API URL into
    the portal build). API env vars come from infra outputs.
-9. **Validate** (`scripts/validate.py`) and drive the browser portal path.
+9. **Validate** (`scripts/validate.py --portal-origin <portal-url>`) and drive the browser portal path.
 
 ### Deploy the hosted agents
 
@@ -137,7 +143,9 @@ azd deploy fsi-pe-lbo -e <env>
   to `Disabled` after deploy** (minutes to hours later), silently breaking every artifact download;
   `deploy.ps1` re-asserts it at step 1 and step 7, and you can repair it any time with
   `az storage account update -n <acct> -g <rg> --public-network-access Enabled --default-action Allow`
-  or a policy exemption. RBAC alone is not sufficient.
+  or a policy exemption. Where the policy owner approves its documented `SecurityControl=Ignore`
+  exclusion, `deploy.ps1 -DemoStoragePolicyOptOut` tags the storage account only (never anonymous
+  blobs or shared keys). RBAC alone is not sufficient.
 - **Always sync the runtime into `_azd/agent-src` before `azd deploy`.** The source of truth is
   `agents/hosted/*.py`; the deployed copy is `agents/hosted/_azd/agent-src/*.py`. Verify with
   `Get-FileHash`. Deploying a stale copy silently ships old behavior.
@@ -170,14 +178,14 @@ azd deploy fsi-pe-lbo -e <env>
 
 ## Validation
 
-- API path: `python scripts/validate.py` (reads `API_BASE_URL`) submits each scenario to
+- API path: `python scripts/validate.py --portal-origin <portal-url>` (reads `API_BASE_URL`) submits each scenario to
   `/api/run` and asserts a real downloadable OOXML artifact (PK zip). Non-zero exit on any
   failure, so it doubles as a CI gate.
 - UI path: drive the portal headlessly -- click a scenario card, submit a prompt, wait for
   `Complete`, download the artifact, and confirm it is valid OOXML.
 - Heavy single prompts combining deep SEC retrieval + full multi-sheet DCF can 408-timeout at the
   model layer (~360s); the BFF mitigates with one retry + a corrective artifact turn + a one-sheet
-  fallback. That is expected behavior, not a regression.
+  summary fallback, reported as a *Partial result*. That is expected behavior, not a regression.
 
 ## Official references
 

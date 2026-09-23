@@ -1,0 +1,25 @@
+{
+  "webResults": [
+    {
+      "title": "Example Corporation announces a new product",
+      "url": "https://example.com/news/product",
+      "content": "<article><h2>Product update</h2><p>Synthetic test passage about a fictional <strong>product announcement</strong>.</p></article>",
+      "lastUpdatedAt": "2026-09-16T10:20:30.1234567Z",
+      "crawledAt": "2026-09-17T01:02:03.1234567Z",
+      "language": "en",
+      "isAdult": false,
+      "clickUrl": "https://tracking.example/click?synthetic=one"
+    },
+    {
+      "title": "Example Corporation market commentary",
+      "url": "https://example.org/markets/commentary",
+      "content": "Synthetic test passage with no publication or update date.",
+      "crawledAt": "2026-09-17T02:03:04.1234567Z",
+      "language": "en",
+      "isAdult": false,
+      "clickUrl": "https://tracking.example/click?synthetic=two"
+    }
+  ],
+  "querySignals": { "freshness": true },
+  "traceId": "synthetic-provider-trace-id"
+}

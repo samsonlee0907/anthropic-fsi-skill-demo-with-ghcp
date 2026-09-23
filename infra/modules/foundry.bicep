@@ -6,16 +6,8 @@ param aiAccountName string
 param projectName string
 param projectDisplayName string = 'FSI Multi-Agent Demo'
 
-@description('Model deployments to create on the account. Deployed one at a time to avoid concurrent-write conflicts.')
-param modelDeployments array = [
-  {
-    name: 'gpt-5.4'
-    model: 'gpt-5.4'
-    version: '2026-03-05'
-    sku: 'GlobalStandard'
-    capacity: 150
-  }
-]
+@description('Model deployments to create on the account (supplied by main.bicep; no default model). Deployed one at a time to avoid concurrent-write conflicts.')
+param modelDeployments array
 
 resource account 'Microsoft.CognitiveServices/accounts@2026-05-01' = {
   name: aiAccountName
@@ -50,10 +42,15 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2026-05-01' = {
   }
 }
 
+// Serialized after the project: concurrent project + deployment writes on a new account fail
+// with RequestConflict ("Another operation is in progress").
 @batchSize(1)
 resource deployments 'Microsoft.CognitiveServices/accounts/deployments@2026-05-01' = [for d in modelDeployments: {
   parent: account
   name: d.name
+  dependsOn: [
+    project
+  ]
   sku: {
     name: d.sku
     capacity: d.capacity

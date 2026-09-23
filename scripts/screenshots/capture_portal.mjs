@@ -21,10 +21,7 @@
 //   HEADED           "true" to watch the browser (default: headless)
 
 import { chromium } from 'playwright';
-import { mkdir, writeFile } from 'node:fs/promises';
-import { createWriteStream } from 'node:fs';
-import { Readable } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,10 +46,11 @@ const RUN = (process.env.RUN ?? 'true').toLowerCase() !== 'false';
 const RUN_TIMEOUT_MS = Number(process.env.RUN_TIMEOUT_MS ?? 600000);
 const HEADED = (process.env.HEADED ?? 'false').toLowerCase() === 'true';
 const FALLBACK_ARTIFACT_RE = /agent_summary\.(xlsx|pptx)$/i;
+const OFFICE_ARTIFACT_RE = /\.(xlsx|pptx|docx)$/i;
 
 const EXPECTED_ARTIFACT_EXTS = {
   'equity-research': ['.xlsx'],
-  'ib-pitch': ['.xlsx', '.pptx'],
+  'ib-pitch': ['.pptx'],
   'pe-lbo': ['.xlsx']
 };
 
@@ -76,6 +74,14 @@ async function main() {
     deviceScaleFactor: 2 // retina-crisp PNGs for the README
   });
   const page = await context.newPage();
+  // The capture leaves the optional WebIQ key blank, so no request may carry WebIQ data.
+  const webiqLeaks = [];
+  page.on('request', (req) => {
+    const headers = req.headers();
+    let query = '';
+    try { query = JSON.parse(req.postData() || '{}')?.webiq_query ?? ''; } catch { /* not JSON */ }
+    if (headers['x-webiq-key'] || String(query).trim()) webiqLeaks.push(`${req.method()} ${req.url()}`);
+  });
 
   console.log(`[portal] opening ${PORTAL_URL}`);
   await page.goto(PORTAL_URL, { waitUntil: 'networkidle', timeout: 60000 });
@@ -100,6 +106,11 @@ async function main() {
     }
   }
 
+  if (webiqLeaks.length) {
+    manifest.failures.push({ scenario: 'webiq', message: `WebIQ data sent with a blank key: ${webiqLeaks.join(', ')}` });
+  } else {
+    console.log('[portal] no request carried a WebIQ key or query');
+  }
   await writeFile(path.join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2));
   await browser.close();
   console.log(`[portal] done — ${manifest.images.length} image(s), ${manifest.artifacts.length} artifact(s).`);
@@ -131,22 +142,25 @@ async function runScenario(page, key, manifest) {
   await page.locator('button.primaryButton').first().click();
   console.log(`[portal] run submitted for ${key}; waiting up to ${Math.round(RUN_TIMEOUT_MS / 1000)}s`);
 
-  // Completion = the latest agent card reaches complete or publishes artifact chips.
-  // Scope all checks to the latest card so prior runs do not satisfy a new scenario.
+  // Wait for a terminal state; an early artifact does not mean the run succeeded.
+  // The workflow badge carries complete/partial; individual agent cards use done.
   const deadline = Date.now() + RUN_TIMEOUT_MS;
   let completed = false;
   while (Date.now() < deadline) {
     const cards = page.locator('article.agentCard');
     const cardCount = await cards.count();
     const latestCard = cardCount > 0 ? cards.last() : null;
-    const chips = latestCard ? await latestCard.locator('a.artifactChip').count() : 0;
-    const complete = latestCard ? await latestCard.evaluate((el) => el.classList.contains('complete')) : false;
+    const badge = page.locator('.runBadge');
+    const complete = await badge.evaluate((el) => el.classList.contains('complete'));
+    const partial = await badge.evaluate((el) => el.classList.contains('partial'));
+    const failed = await badge.evaluate((el) => el.classList.contains('error'));
     const errored = latestCard ? await latestCard.evaluate((el) => el.classList.contains('error')) : false;
-    if (chips > 0 || complete) {
+    if (failed || errored) throw new Error('workflow entered error state');
+    if (partial) throw new Error('workflow returned only a partial outcome');
+    if (complete && latestCard) {
       completed = true;
       break;
     }
-    if (errored) throw new Error('latest agent card entered error state');
     await sleep(4000);
   }
   if (!completed) throw new Error('timed out waiting for completion');
@@ -162,32 +176,34 @@ async function runScenario(page, key, manifest) {
   console.log(`[portal] saved ${runImg}`);
 
   // Download every artifact this run produced.
-  const chipLocs = latestCard.locator('a.artifactChip');
+  const chipLocs = latestCard.locator('button.artifactChip, a.artifactChip');
   const n = await chipLocs.count();
   const downloaded = [];
   for (let i = 0; i < n; i++) {
-    const href = await chipLocs.nth(i).getAttribute('href');
-    let filename = (await chipLocs.nth(i).innerText()).trim().replace(/^▣\s*/, '').trim();
-    if (!href) continue;
-    const url = new URL(href, PORTAL_URL).toString();
-    if (!filename) filename = `artifact-${key}-${i}`;
+    const [download] = await Promise.all([
+      page.waitForEvent('download', { timeout: 120000 }),
+      chipLocs.nth(i).click()
+    ]);
+    const filename = path.basename(download.suggestedFilename());
     const dest = path.join(ARTIFACT_DIR, filename);
-    try {
-      const resp = await page.request.get(url, { timeout: 120000 });
-      if (!resp.ok()) throw new Error(`HTTP ${resp.status()}`);
-      const buf = await resp.body();
-      await pipeline(Readable.from(buf), createWriteStream(dest));
-      manifest.artifacts.push({
-        file: path.relative(OUT_DIR, dest).split(path.sep).join('/'),
-        filename,
-        scenario: key,
-        bytes: buf.length
-      });
-      downloaded.push({ filename, bytes: buf.length });
-      console.log(`[portal] downloaded artifact ${filename} (${buf.length} bytes)`);
-    } catch (err) {
-      console.error(`[portal] artifact download failed for ${filename}: ${err?.message ?? err}`);
+    await download.saveAs(dest);
+    const buf = await readFile(dest);
+    if (!OFFICE_ARTIFACT_RE.test(filename)) {
+      // Supporting files (for example a JSON checks log) are kept but not rendered.
+      console.log(`[portal] downloaded supporting file ${filename} (${buf.length} bytes)`);
+      continue;
     }
+    if (!buf.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
+      throw new Error(`download '${filename}' is not an Office ZIP artifact`);
+    }
+    manifest.artifacts.push({
+      file: path.relative(OUT_DIR, dest).split(path.sep).join('/'),
+      filename,
+      scenario: key,
+      bytes: buf.length
+    });
+    downloaded.push({ filename, bytes: buf.length });
+    console.log(`[portal] downloaded artifact ${filename} (${buf.length} bytes)`);
   }
 
   validateArtifacts(key, downloaded);

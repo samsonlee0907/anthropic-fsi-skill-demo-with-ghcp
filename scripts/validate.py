@@ -9,6 +9,7 @@ infra API_URL output).
 Usage:
     python scripts/validate.py --api-base https://<api-fqdn>
     python scripts/validate.py pe-lbo            # single scenario
+    python scripts/validate.py --api-base https://<api-fqdn> --portal-origin https://<portal-fqdn> --preflight-only
 Exit code is non-zero if any scenario fails, so it doubles as a CI gate.
 """
 import argparse
@@ -18,6 +19,8 @@ import os
 import re
 import sys
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 
@@ -65,6 +68,47 @@ def run_scenario(base: str, scenario: str, timeout: int = 1800):
             elif t == "error":
                 errors.append(ev.get("message", ""))
     return artifacts, errors, int(time.time() - t0)
+
+
+def portal_origin(value: str) -> str:
+    parsed = urllib.parse.urlsplit(value)
+    if (parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username
+            or parsed.password or parsed.path not in {"", "/"} or parsed.query or parsed.fragment):
+        raise argparse.ArgumentTypeError("Portal origin must be an HTTP(S) origin without credentials, path or query.")
+    return value.rstrip("/")
+
+
+def validate_cors(base: str, origin: str) -> bool:
+    """Check the real ingress response, without capabilities, writes or model calls."""
+    passed = True
+    for method, path, headers in (
+        ("GET", "/api/health", ()),
+        ("POST", "/api/run", ("content-type", "x-webiq-key")),
+    ):
+        request_headers = {"Origin": origin, "Access-Control-Request-Method": method}
+        if headers:
+            request_headers["Access-Control-Request-Headers"] = ", ".join(headers)
+        req = urllib.request.Request(base + path, method="OPTIONS", headers=request_headers)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                allowed_origin = response.headers.get("Access-Control-Allow-Origin", "")
+                allowed_methods = {item.strip() for item in
+                                   response.headers.get("Access-Control-Allow-Methods", "").split(",")}
+                allowed_headers = {item.strip().lower() for item in
+                                   response.headers.get("Access-Control-Allow-Headers", "").split(",")}
+                valid = (200 <= response.status < 300 and allowed_origin in {origin, "*"}
+                         and (method in allowed_methods or "*" in allowed_methods)
+                         and (not headers or "*" in allowed_headers or set(headers) <= allowed_headers))
+        except (urllib.error.URLError, TimeoutError):
+            print(f"[FAIL] browser {method} {path}: CORS preflight could not be read.")
+            passed = False
+            continue
+        if valid:
+            print(f"[PASS] browser {method} {path}: ingress permits the portal origin, method and request headers.")
+        else:
+            print(f"[FAIL] browser {method} {path}: ingress CORS does not permit the portal origin, method or request headers.")
+            passed = False
+    return passed
 
 
 def is_ooxml(data: bytes) -> bool:
@@ -133,9 +177,17 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("scenarios", nargs="*", help="scenarios to run (default: all)")
     ap.add_argument("--api-base", default=None, help="API base URL (or set API_BASE_URL)")
+    ap.add_argument("--portal-origin", type=portal_origin, help="Check ingress CORS for this portal origin before scenarios")
+    ap.add_argument("--preflight-only", action="store_true", help="Only check CORS; no sessions, writes or model calls")
     args = ap.parse_args()
 
+    if args.preflight_only and (not args.portal_origin or args.scenarios):
+        ap.error("--preflight-only requires --portal-origin and no scenarios")
     base = _api_base(args.api_base)
+    if args.portal_origin and not validate_cors(base, args.portal_origin):
+        sys.exit(1)
+    if args.preflight_only:
+        sys.exit(0)
     targets = args.scenarios or list(EXPECTED_EXT.keys())
     results = {s: validate(base, s) for s in targets if s in EXPECTED_EXT}
     passed = sum(results.values())
