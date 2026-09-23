@@ -23,7 +23,8 @@ Raw downloaded Office files land in `docs/images/_artifacts/` and are **gitignor
 only the rendered PNGs are committed.
 
 The capture fails fast if a scenario only returns a fallback `*_agent_summary.*` file or
-misses an expected default artifact type (for IB pitch: both `.pptx` and `.xlsx`).
+misses an expected default artifact type (`.xlsx` for equity research and PE LBO, `.pptx`
+for IB pitch; supporting workbooks from IB pitch are captured when present).
 
 ## Prerequisites
 

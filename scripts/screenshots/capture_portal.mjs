@@ -46,10 +46,11 @@ const RUN = (process.env.RUN ?? 'true').toLowerCase() !== 'false';
 const RUN_TIMEOUT_MS = Number(process.env.RUN_TIMEOUT_MS ?? 600000);
 const HEADED = (process.env.HEADED ?? 'false').toLowerCase() === 'true';
 const FALLBACK_ARTIFACT_RE = /agent_summary\.(xlsx|pptx)$/i;
+const OFFICE_ARTIFACT_RE = /\.(xlsx|pptx|docx)$/i;
 
 const EXPECTED_ARTIFACT_EXTS = {
   'equity-research': ['.xlsx'],
-  'ib-pitch': ['.xlsx', '.pptx'],
+  'ib-pitch': ['.pptx'],
   'pe-lbo': ['.xlsx']
 };
 
@@ -73,6 +74,14 @@ async function main() {
     deviceScaleFactor: 2 // retina-crisp PNGs for the README
   });
   const page = await context.newPage();
+  // The capture leaves the optional WebIQ key blank, so no request may carry WebIQ data.
+  const webiqLeaks = [];
+  page.on('request', (req) => {
+    const headers = req.headers();
+    let query = '';
+    try { query = JSON.parse(req.postData() || '{}')?.webiq_query ?? ''; } catch { /* not JSON */ }
+    if (headers['x-webiq-key'] || String(query).trim()) webiqLeaks.push(`${req.method()} ${req.url()}`);
+  });
 
   console.log(`[portal] opening ${PORTAL_URL}`);
   await page.goto(PORTAL_URL, { waitUntil: 'networkidle', timeout: 60000 });
@@ -97,6 +106,11 @@ async function main() {
     }
   }
 
+  if (webiqLeaks.length) {
+    manifest.failures.push({ scenario: 'webiq', message: `WebIQ data sent with a blank key: ${webiqLeaks.join(', ')}` });
+  } else {
+    console.log('[portal] no request carried a WebIQ key or query');
+  }
   await writeFile(path.join(OUT_DIR, 'manifest.json'), JSON.stringify(manifest, null, 2));
   await browser.close();
   console.log(`[portal] done — ${manifest.images.length} image(s), ${manifest.artifacts.length} artifact(s).`);
@@ -174,6 +188,11 @@ async function runScenario(page, key, manifest) {
     const dest = path.join(ARTIFACT_DIR, filename);
     await download.saveAs(dest);
     const buf = await readFile(dest);
+    if (!OFFICE_ARTIFACT_RE.test(filename)) {
+      // Supporting files (for example a JSON checks log) are kept but not rendered.
+      console.log(`[portal] downloaded supporting file ${filename} (${buf.length} bytes)`);
+      continue;
+    }
     if (!buf.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]))) {
       throw new Error(`download '${filename}' is not an Office ZIP artifact`);
     }

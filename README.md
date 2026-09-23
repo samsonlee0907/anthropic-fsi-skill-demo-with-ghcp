@@ -54,25 +54,30 @@ to build the Office artifacts.*
 ![Completed Equity Research run showing the live activity feed, narrative with SEC filing URLs, and the workbook download button](docs/images/portal-run-equity-research.png)
 
 *A completed **Equity Research** run. The live activity feed shows the agent loading
-governed skills and calling toolbox-routed tools (`sec-edgar___get_company_info`,
-`sec-edgar___get_recent_filings`, `sec-edgar___get_key_metrics`, `web`) and the code
-interpreter; the narrative cites **real SEC filing URLs**; and the finished workbook is
-offered as a **download button** (`MSFT_valuation_package_*.xlsx`).*
+governed skills and calling the toolbox's Tool Search meta-tools (`tool_search`, then
+`call_tool`) to reach SEC EDGAR, including the normalized financial fact pack, and web search.
+The narrative states which inputs stayed unresolved, and the finished workbook, deck and checks
+log are offered as **download buttons**.*
+
+![Completed PE LBO run with the workflow badge at Complete and the workbook download button](docs/images/portal-run-pe-lbo.png)
+
+*A completed **PE LBO Screening** run. The workflow badge reports Complete, Partial result or
+Attention needed, so a narrative-only fallback is never shown as a full success.*
 
 ### Generated artifacts
 
-![Excel DCF workbook: MSFT base/bull/bear cases, WACC, and SEC-sourced market data](docs/images/artifact-equity-dcf.png)
+![Excel valuation workbook summary: MSFT bear/base/bull DCF cases, WACC and terminal-growth assumptions, with unresolved inputs flagged](docs/images/artifact-equity-dcf.png)
 
-*Equity Research → `.xlsx`: a base/bull/bear DCF with WACC and SEC-sourced market data
-(share price, shares outstanding, cash, debt), authored in the code interpreter from the
-Anthropic `dcf-model` + `xlsx-author` skills.*
+*Equity Research → `.xlsx`: the summary sheet of a valuation package (bear/base/bull DCF, WACC,
+comps, sources and checks sheets) authored in the code interpreter from the Anthropic
+`dcf-model` + `xlsx-author` skills. Inputs that could not be sourced, such as live quotes, stay
+flagged as unresolved rather than invented.*
 
-![PowerPoint competitive-positioning slide: MSFT vs GOOGL, ORCL, CRM, ADBE, NOW on scale vs platform breadth](docs/images/artifact-ib-pitch-slide.png)
+![PowerPoint slide: Microsoft FY2026 revenue, operating income, net income, cash generation and capital structure, sourced to the 10-K](docs/images/artifact-ib-pitch-slide.png)
 
-*Investment Banking → `.pptx`: a competitive-positioning slide (scale vs. platform
-breadth) from the `competitive-analysis` + `pptx-author` skills, with repo-local styling and
-QC overlays to keep the exported deck readable in both PowerPoint and flattened PNG form. The
-IB run also emits a supporting `.pptx` deck and `.xlsx` model as download buttons.*
+*Investment Banking → `.pptx`: a financial-profile slide from the pitch deck, built with the
+`competitive-analysis` + `pptx-author` skills and repo-local styling overlays, with figures
+sourced to the latest 10-K. The IB run can also emit a supporting `.xlsx` workbook.*
 
 ## Quickstart
 

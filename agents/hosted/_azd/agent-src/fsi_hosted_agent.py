@@ -187,7 +187,7 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def _system_prompt() -> str:
-    title = os.environ.get("FSI_SCENARIO_TITLE", "Financial Services Analyst")
+    title = os.environ.get("FSI_SCENARIO_TITLE", "Financial Services")
     brief = os.environ.get(
         "FSI_SCENARIO_BRIEF",
         "Produce traceable financial-analysis drafts with explicit source and modeling limitations.",

@@ -18,6 +18,8 @@ Full notes: [docs/release-notes/v1.0.0.md](docs/release-notes/v1.0.0.md).
   defaults to `modelName`), and `deploy.ps1` requires `-ModelName`, `-ModelVersion` and
   `-ModelCapacity`. There is no hardcoded model default. Suggested: `gpt-6-astra` `2026-09-03`
   GlobalStandard.
+- **PowerShell 7+ is required** for `deploy.ps1` and the `scripts/*.ps1` deploy helpers
+  (`#Requires -Version 7.0`).
 
 ### Added
 
@@ -55,3 +57,10 @@ Full notes: [docs/release-notes/v1.0.0.md](docs/release-notes/v1.0.0.md).
   characters no longer exceed the 24-character Key Vault limit. Names of 12 characters or fewer
   are unchanged.
 - Portal dependencies updated (Next.js 15.5, React 19).
+
+### Fixed
+
+- A clean deploy could fail with `RequestConflict` because the Foundry project and the model
+  deployment were written concurrently; the model deployment now waits for the project.
+- Screenshot capture accepts non-Office supporting files and binds the Office renderer's
+  arguments by name.
