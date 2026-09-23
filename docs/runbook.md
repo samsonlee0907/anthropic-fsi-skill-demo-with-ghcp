@@ -58,7 +58,10 @@ mandate to target any public ticker.
   `azd ext install microsoft.foundry`, or the individual extensions
   `azd extension install azure.ai.agents azure.ai.skills azure.ai.connections azure.ai.toolboxes`;
   either works, verify with `azd ai agent --help`),
-  `gh` (authenticated), Python 3.11+ (for the API/portal builds and `scripts/validate.py`).
+  `gh` (authenticated), Python 3.11+ (for the API/portal builds and `scripts/validate.py`), and
+  **PowerShell 7+** (`pwsh`). The deploy scripts declare `#Requires -Version 7.0`: Windows
+  PowerShell 5.1 turns redirected native-command stderr (for example azd's "update available"
+  notice) into terminating errors under `$ErrorActionPreference = 'Stop'`.
 - `az login`. Skills, the SEC connection and the toolboxes are provisioned declaratively with
   `azd ai` (`scripts/provision_foundry.ps1`) — no Python provisioning dependencies. Multi-subscription
   users: `az account set --subscription <id>` or pass `-SubscriptionId <id>` to `deploy.ps1`.

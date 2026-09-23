@@ -57,6 +57,7 @@
         -ModelName gpt-6-astra -ModelVersion 2026-09-03 -ModelSku GlobalStandard -ModelCapacity 100 `
         -SecEdgarUserAgent "Jane Doe (jane@example.com)"
 #>
+#Requires -Version 7.0
 [CmdletBinding()]
 param(
     [string]$EnvName = 'fsi-demo',

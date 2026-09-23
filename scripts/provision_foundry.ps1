@@ -44,6 +44,7 @@
     azd credential subprocess calls flake under load (`AzureDeveloperCLICredential:
     exit status 1`), so every azd call is wrapped in a retry loop.
 #>
+#Requires -Version 7.0
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$EnvName,

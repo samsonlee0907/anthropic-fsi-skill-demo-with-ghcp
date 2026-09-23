@@ -11,6 +11,7 @@
     The upstream sec-edgar-mcp package is AGPL-3.0; review licensing before
     commercial redistribution.
 #>
+#Requires -Version 7.0
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ResourceGroup,

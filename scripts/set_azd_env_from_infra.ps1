@@ -13,6 +13,7 @@
     Called by deploy.ps1. Can also be run standalone once you have the infra
     outputs (e.g. from `azd env get-value AZURE_AI_PROJECT_ENDPOINT`).
 #>
+#Requires -Version 7.0
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ProjectEndpoint,

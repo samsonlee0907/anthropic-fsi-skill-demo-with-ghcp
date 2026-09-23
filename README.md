@@ -83,7 +83,9 @@ IB run also emits a supporting `.pptx` deck and `.xlsx` model as download button
   region.
 - Tools on PATH: **Azure CLI (`az`)**, **Azure Developer CLI (`azd`)**, **`gh`** (GitHub
   CLI, authenticated — `deploy.ps1` reads `gh auth token` to let `azd` deploy the hosted
-  agents), **Python 3.11+**.
+  agents), **Python 3.11+**, and **PowerShell 7+ (`pwsh`)**. The deploy scripts declare
+  `#Requires -Version 7.0`; Windows PowerShell 5.1 turns redirected native-command stderr
+  into terminating errors, so it is not supported.
 - The azd **Foundry** extension, which provides the hosted-agent `azd deploy` and
   `azd ai agent` commands. Install the GA unified bundle (provides `azd ai agent`,
   `connection`, `skill`, `toolbox`, and more):
@@ -478,8 +480,8 @@ python agents/hosted/tests/test_runtime_contract.py
 
 # Scripts
 python -m unittest scripts.tests.test_validate_cors
-./scripts/tests/test_storage_policy_opt_out.ps1
-./scripts/tests/test_azd_environment_mapping.ps1
+pwsh ./scripts/tests/test_storage_policy_opt_out.ps1
+pwsh ./scripts/tests/test_azd_environment_mapping.ps1
 
 # Portal
 cd portal; npm ci; npm test; npm run build; npm run typecheck

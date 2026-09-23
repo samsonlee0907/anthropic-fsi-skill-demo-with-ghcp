@@ -41,6 +41,7 @@
     group, enable shared keys, or permit anonymous blobs. Other policy rules may
     honor the same exclusion tag.
 #>
+#Requires -Version 7.0
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$ResourceGroup,
