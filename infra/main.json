@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "1271099545189351337"
+      "templateHash": "9915442452294368912"
     },
     "description": "FSI Multi-Agent Demo — subscription-scoped deployment: resource group + Foundry + supporting services + Container Apps."
   },
@@ -331,7 +331,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "15535680882571815727"
+              "templateHash": "441485127284625967"
             },
             "description": "Microsoft Foundry account (AI Services) + project + serialized model deployments for the FSI multi-agent demo."
           },
@@ -420,7 +420,8 @@
                 "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('aiAccountName'))]"
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('aiAccountName'))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('aiAccountName'), parameters('projectName'))]"
               ]
             }
           ],
