@@ -6,16 +6,8 @@ param aiAccountName string
 param projectName string
 param projectDisplayName string = 'FSI Multi-Agent Demo'
 
-@description('Model deployments to create on the account. Deployed one at a time to avoid concurrent-write conflicts.')
-param modelDeployments array = [
-  {
-    name: 'gpt-5.4'
-    model: 'gpt-5.4'
-    version: '2026-03-05'
-    sku: 'GlobalStandard'
-    capacity: 150
-  }
-]
+@description('Model deployments to create on the account (supplied by main.bicep; no default model). Deployed one at a time to avoid concurrent-write conflicts.')
+param modelDeployments array
 
 resource account 'Microsoft.CognitiveServices/accounts@2026-05-01' = {
   name: aiAccountName

@@ -34,6 +34,12 @@
 .PARAMETER PolicyDefinitionReferenceIds
     Optional. For an initiative (policy set), the definition reference id(s) within it to
     exempt. Ignored for single-definition assignments.
+
+.PARAMETER DemoPolicyOptOut
+    Explicit approval to put SecurityControl=Ignore on this storage account only,
+    matching the governing policy's supported exclusion. Does not tag the resource
+    group, enable shared keys, or permit anonymous blobs. Other policy rules may
+    honor the same exclusion tag.
 #>
 [CmdletBinding()]
 param(
@@ -41,13 +47,42 @@ param(
     [Parameter(Mandatory = $true)][string]$StorageAccountName,
     [string]$ExemptionName = 'fsi-storage-public-network-waiver',
     [string]$PolicyAssignmentId = '',
-    [string[]]$PolicyDefinitionReferenceIds = @()
+    [string[]]$PolicyDefinitionReferenceIds = @(),
+    [switch]$DemoPolicyOptOut
 )
 
 $ErrorActionPreference = 'Stop'
 
 function Get-Pna {
-    az storage account show -n $StorageAccountName -g $ResourceGroup --query publicNetworkAccess -o tsv 2>$null
+    $value = az storage account show -n $StorageAccountName -g $ResourceGroup --query publicNetworkAccess -o tsv
+    if ($LASTEXITCODE -ne 0 -or -not $value) { throw "Could not read public network access for $StorageAccountName." }
+    return $value
+}
+
+if ($DemoPolicyOptOut) {
+    $accountJson = az storage account show -n $StorageAccountName -g $ResourceGroup -o json
+    if ($LASTEXITCODE -ne 0) { throw "Could not read storage account $StorageAccountName." }
+    $account = $accountJson | ConvertFrom-Json
+    if ($account.tags.SecurityControl -ne 'Ignore') {
+        az tag update --resource-id $account.id --operation Merge --tags SecurityControl=Ignore -o none
+        if ($LASTEXITCODE -ne 0) { throw "Could not apply the approved storage-only governance opt-out." }
+    }
+    az storage account update -n $StorageAccountName -g $ResourceGroup `
+        --public-network-access Enabled --default-action Allow `
+        --allow-blob-public-access false --allow-shared-key-access false -o none
+    if ($LASTEXITCODE -ne 0) { throw "Could not enable authenticated storage network access." }
+    $verifiedJson = az storage account show -n $StorageAccountName -g $ResourceGroup -o json
+    if ($LASTEXITCODE -ne 0) { throw "Could not verify the storage governance opt-out." }
+    $verified = $verifiedJson | ConvertFrom-Json
+    if ($verified.tags.SecurityControl -ne 'Ignore' -or
+        $verified.publicNetworkAccess -ne 'Enabled' -or
+        $verified.networkRuleSet.defaultAction -ne 'Allow' -or
+        $verified.allowBlobPublicAccess -ne $false -or
+        $verified.allowSharedKeyAccess -ne $false) {
+        throw "Storage governance or access verification failed. Inspect policy evaluation; do not retry periodic enablement."
+    }
+    Write-Host "  [storage] approved account-only policy opt-out; network Enabled; anonymous blobs and shared keys disabled"
+    return
 }
 
 function Set-Enabled {

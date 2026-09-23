@@ -15,6 +15,8 @@ azure.yaml
 .env.*
 .azure/
 .git/
+.foundry/
+.agent_configs/
 
 # Python
 __pycache__/

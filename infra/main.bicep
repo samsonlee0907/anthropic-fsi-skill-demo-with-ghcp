@@ -13,19 +13,34 @@ param location string = 'eastus2'
 @description('Object ID of a user/group to also grant Foundry data-plane access (optional, for portal testing in ai.azure.com).')
 param developerPrincipalId string = ''
 
-@description('Model deployment name the hosted agents run on. MUST match one of the names in modelDeployments (below), or the agents will call a deployment that does not exist.')
-param agentModelDeploymentName string = 'gpt-5.4'
+@minLength(1)
+@description('REQUIRED. Azure OpenAI catalog model name the hosted agents run on (suggested: gpt-6-astra; alternatives: gpt-6-sol, gpt-6-luna). Confirm availability in your region/subscription. There is intentionally no default.')
+param modelName string
 
-@description('Capacity (thousands of tokens/min) for the default gpt-5.4 deployment. Lower it if you are quota-constrained -- gpt-5.4 GlobalStandard quota is subscription-GLOBAL (shared across every region), so switching region does NOT free quota. Ignored when modelDeployments is overridden directly.')
-param modelCapacity int = 150
+@minLength(1)
+@description('REQUIRED. Exact catalog model version to provision (for example 2026-09-03 for gpt-6-astra, 2026-09-22 for gpt-6-sol or gpt-6-luna; confirm with az cognitiveservices model list).')
+param modelVersion string
 
-@description('Model deployments to create on the Foundry account. Override to add models or change capacity/region to fit your quota. Keep the agent model (agentModelDeploymentName) in this list.')
+@description('Deployment SKU supported by the selected model and subscription.')
+param modelSku string = 'GlobalStandard'
+
+@minValue(1)
+@description('REQUIRED. Capacity (thousands of tokens/min) for the model deployment. GlobalStandard quota is subscription-GLOBAL per model (shared across every region and resource group), so check free quota first; switching region does NOT free quota. Ignored when modelDeployments is overridden directly.')
+param modelCapacity int
+
+@description('Model deployment name (alias) the hosted agents call. Defaults to modelName. MUST match one of the names in modelDeployments.')
+param agentModelDeploymentName string = modelName
+
+@description('Explicit demo-only opt-out supported by the governing policy: SecurityControl=Ignore on the STORAGE ACCOUNT ONLY. May exempt other rules honoring that tag. Never enables anonymous blobs or shared keys.')
+param demoStoragePolicyOptOut bool = false
+
+@description('Model deployments to create on the Foundry account. Defaults to a single deployment built from the model* parameters. Keep the agent model (agentModelDeploymentName) in this list.')
 param modelDeployments array = [
   {
-    name: 'gpt-5.4'
-    model: 'gpt-5.4'
-    version: '2026-03-05'
-    sku: 'GlobalStandard'
+    name: agentModelDeploymentName
+    model: modelName
+    version: modelVersion
+    sku: modelSku
     capacity: modelCapacity
   }
 ]
@@ -98,6 +113,7 @@ module storage 'modules/storage.bicep' = {
     location: location
     tags: tags
     storageAccountName: 'st${shortToken}'
+    governanceTags: demoStoragePolicyOptOut ? { SecurityControl: 'Ignore' } : {}
     principalIds: [identity.outputs.principalId, foundry.outputs.projectPrincipalId]
   }
 }
@@ -108,7 +124,7 @@ module keyvault 'modules/keyvault.bicep' = {
   params: {
     location: location
     tags: tags
-    keyVaultName: 'kv-${environmentName}-${shortToken}'
+    keyVaultName: 'kv-${take(environmentName, 12)}-${shortToken}'
     principalIds: [identity.outputs.principalId]
   }
 }
@@ -151,6 +167,8 @@ module containerApps 'modules/containerapps.bicep' = {
       { name: 'PROJECT_ENDPOINT', value: foundry.outputs.projectEndpoint }
       { name: 'STORAGE_BLOB_ENDPOINT', value: storage.outputs.storageBlobEndpoint }
       { name: 'ARTIFACTS_CONTAINER', value: 'artifacts' }
+      { name: 'AZURE_AI_MODEL_DEPLOYMENT_NAME', value: agentModelDeploymentName }
+      { name: 'FSI_ENVIRONMENT_NAME', value: environmentName }
       { name: 'AZURE_CLIENT_ID', value: identity.outputs.clientId }
       { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: monitoring.outputs.appInsightsConnectionString }
     ]

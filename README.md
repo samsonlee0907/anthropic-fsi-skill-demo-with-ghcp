@@ -14,6 +14,10 @@ hardcoded to a particular deployment.
 > **Microsoft / MSFT**), sourcing figures live from **SEC EDGAR** filings and web search.
 > All output is AI-generated for demonstration only and is **not investment advice**.
 
+**Release:** v1.0.0 — see [`CHANGELOG.md`](CHANGELOG.md) and the
+[v1.0.0 release notes](docs/release-notes/v1.0.0.md). v1.0.0 makes the model deployment
+**user-supplied** (no silent default); `gpt-6-astra` is the suggested model.
+
 ## Scenarios
 
 The agent landscape is **scenario-based, not skill-based**: one hosted agent per business
@@ -33,8 +37,8 @@ mandate to analyse any ticker.
 
 ## What it looks like
 
-Everything below is produced by the **default one-click Microsoft (MSFT) prompts** — no
-synthetic data. Regenerate the images from a live deployment with
+Everything below is produced by the **default one-click Microsoft (MSFT) prompts** against a
+live v1.0.0 deployment on `gpt-6-astra` — no synthetic data. Regenerate the images from a live deployment with
 [`scripts/capture_screenshots.ps1`](scripts/capture_screenshots.ps1) (guide:
 [`scripts/screenshots/README.md`](scripts/screenshots/README.md)).
 
@@ -43,7 +47,8 @@ synthetic data. Regenerate the images from a live deployment with
 ![Scenario gallery: three FSI workflows, each mapped to one Foundry hosted agent and its skill toolbox](docs/images/portal-landing.png)
 
 *Scenario gallery — one hosted agent per FSI workflow, with each toolbox's governed
-skills and live data tools shown on the right. The runs then use native Code Interpreter
+skills and live data tools shown on the right. The header reports the environment and the
+model deployment name exposed by `/api/health`. The runs then use native Code Interpreter
 to build the Office artifacts.*
 
 ![Completed Equity Research run showing the live activity feed, narrative with SEC filing URLs, and the workbook download button](docs/images/portal-run-equity-research.png)
@@ -73,8 +78,9 @@ IB run also emits a supporting `.pptx` deck and `.xlsx` model as download button
 
 ### Prerequisites
 
-- An Azure subscription with **Foundry model quota** in your target region (default
-  `eastus2`) for the model deployments in `infra/modules/foundry.bicep`.
+- An Azure subscription with **Foundry model quota** for the model you choose (see
+  [Choose a model and check quota](#choose-a-model-and-check-quota)). `eastus2` is the tested
+  region.
 - Tools on PATH: **Azure CLI (`az`)**, **Azure Developer CLI (`azd`)**, **`gh`** (GitHub
   CLI, authenticated — `deploy.ps1` reads `gh auth token` to let `azd` deploy the hosted
   agents), **Python 3.11+**.
@@ -84,8 +90,8 @@ IB run also emits a supporting `.pptx` deck and `.xlsx` model as download button
   ```powershell
   azd ext install microsoft.foundry        # verify: azd ai agent --help
   ```
-  > The legacy individual beta extension (`azd extension install azure.ai.agents`) also
-  > works; `deploy.ps1` accepts either packaging.
+  > The individual `azure.ai.agents` / `azure.ai.skills` / `azure.ai.connections` /
+  > `azure.ai.toolboxes` extensions also work; `deploy.ps1` accepts either packaging.
 - `az login` to the target subscription. If you have more than one subscription, either
   `az account set --subscription <id>` first or pass `-SubscriptionId <id>` to `deploy.ps1`.
 
@@ -94,16 +100,51 @@ IB run also emits a supporting `.pptx` deck and `.xlsx` model as download button
 > the SEC EDGAR connection, and the toolboxes are provisioned declaratively with `azd ai`
 > (`scripts/provision_foundry.ps1`) — no Python provisioning dependencies are required.
 
+### Choose a model and check quota
+
+There is **no built-in model default**. You supply the model name, version, SKU and capacity,
+and `deploy.ps1` creates exactly one model deployment (named after the model unless you pass
+`-ModelDeploymentName`) that all three hosted agents and the API use.
+
+| Model | Version | SKUs in `eastus2` | Notes |
+|---|---|---|---|
+| **`gpt-6-astra`** (suggested) | `2026-09-03` | GlobalStandard, DataZoneStandard, GlobalProvisionedManaged, DataZoneProvisionedManaged | The model the v1.0.0 release was validated on. |
+| `gpt-6-sol` | `2026-09-22` | GlobalStandard, DataZoneStandard, GlobalProvisionedManaged, DataZoneProvisionedManaged | Alternative. |
+| `gpt-6-luna` | `2026-09-22` | GlobalStandard, DataZoneStandard | Alternative. |
+
+Catalog availability changes over time — confirm the version and SKUs for your region, then
+check free quota before deploying:
+
+```powershell
+$model = 'gpt-6-astra'; $region = 'eastus2'
+az cognitiveservices model list -l $region `
+  --query "[?model.name=='$model'].{version:model.version,skus:model.skus[].name}" -o json
+az cognitiveservices usage list -l $region `
+  --query "[?contains(name.value,'$model')].{name:name.value,used:currentValue,limit:limit}" -o table
+```
+
+`-ModelCapacity` is in **thousands of tokens per minute** (e.g. `100` = 100K TPM) and must fit
+in `limit - used`. **GlobalStandard quota is subscription-global per model**: every region shows
+the same used/limit, so other deployments of the same model anywhere in the subscription
+consume it and region-hopping will not free it. A soft-deleted Foundry account can also still
+hold quota (see the runbook's teardown section).
+
 ### Deploy
 
 ```powershell
-# From the repo root
-./deploy.ps1 -EnvName fsi-demo -Location eastus2
-
-# ...or with SEC EDGAR public-filing grounding enabled:
+# From the repo root (SEC EDGAR grounding needs a real contact string for SEC's fair-access policy)
 ./deploy.ps1 -EnvName fsi-demo -Location eastus2 `
+    -ModelName gpt-6-astra -ModelVersion 2026-09-03 -ModelSku GlobalStandard -ModelCapacity 100 `
+    -SecEdgarUserAgent "Jane Doe (jane@example.com)"
+
+# ...or with an alternative model:
+./deploy.ps1 -EnvName fsi-sol -Location eastus2 `
+    -ModelName gpt-6-sol -ModelVersion 2026-09-22 -ModelSku GlobalStandard -ModelCapacity 100 `
     -SecEdgarUserAgent "Jane Doe (jane@example.com)"
 ```
+
+Omit `-SecEdgarUserAgent` to skip the SEC EDGAR MCP server (web search still grounds the
+analysis). `-EnvName` should be 20 characters or fewer.
 
 `deploy.ps1` runs the whole ordered, idempotent flow: provision infra → register skills &
 toolboxes → (optional) deploy SEC EDGAR MCP → bind skills → configure the azd agent
@@ -113,9 +154,13 @@ second deployment; every resource is namespaced by it.
 
 Useful switches for constrained or governed subscriptions:
 
-- `-ModelCapacity <thousands-of-TPM>` (default `150`) — lower it if your `gpt-5.4`
-  GlobalStandard quota is tight. That quota is **subscription-global** (every region shows the
-  same used/limit), so region-hopping won't free it — purge an unused Foundry account instead.
+- `-ModelCapacity <thousands-of-TPM>` (required) — pick a value that fits your free quota for
+  the chosen model (see [above](#choose-a-model-and-check-quota)).
+- `-DemoStoragePolicyOptOut` — for demo subscriptions whose Azure Policy keeps disabling public
+  network access on the storage account. It adds the `SecurityControl=Ignore` tag to the
+  **storage account only**; anonymous blob access and shared-key access stay disabled and all
+  data access remains Entra ID (RBAC) only. Only use it where your organization permits that
+  tag.
 - `-PrincipalId <objectId>` — pass your Entra object ID explicitly if `az ad signed-in-user show`
   can't resolve it (e.g. under a Conditional Access / CAE challenge). `deploy.ps1` otherwise
   resolves it from Graph or the ARM token's `oid` claim, and **stops fast** if all paths fail
@@ -126,7 +171,33 @@ Useful switches for constrained or governed subscriptions:
   runbook's *Storage public network access & policy exemptions* section if you lack policy
   permissions.
 
-Resume after a failure with the `-Skip*` switches (e.g. `-SkipInfra -SkipSkills`).
+Resume after a failure with the `-Skip*` switches (e.g. `-SkipInfra -SkipSkills`). With
+`-SkipInfra` the model parameters are optional: the existing deployment name is read from the
+infra outputs.
+
+### Optional WebIQ news enrichment
+
+The portal has an optional **WebIQ news enrichment** panel for `/api/run`. It is off by
+default and needs no server configuration:
+
+- Paste your own WebIQ API key in the panel. The key lives only in that browser tab's memory
+  (never in storage, cookies, URLs or run history; reloading clears it) and is sent to the API
+  only in the `X-WebIQ-Key` request header over HTTPS.
+- **A key alone never searches.** WebIQ is called only when you also enter an explicit news
+  query; only that query (not your mandate) is sent to WebIQ.
+- Retrieved passages are passed to the agent as clearly delimited **untrusted context**; SEC
+  filings remain the primary source for figures. The API redacts the header from telemetry.
+- If the search fails, no agent run starts; use **Clear key and run without WebIQ**. An empty
+  search result continues as a *Partial result* with a warning.
+
+### Cost and quota notes
+
+A deployment runs billable resources: the Foundry model deployment (token usage), three
+hosted agents, up to three Container Apps (API and portal scale to zero when idle; the
+optional SEC EDGAR MCP server keeps one replica), ACR, Storage, Key Vault and Application Insights. Each scenario run is one
+long agent turn with SEC/web tool calls plus Code Interpreter work and can consume a large
+number of tokens; a heavy prompt may take several minutes. Delete the resource group when you
+are done (see the runbook's teardown section).
 
 See [`docs/runbook.md`](docs/runbook.md) for step-by-step internals, RBAC, gotchas, and
 teardown, and [`.env.example`](.env.example) for every configurable variable.
@@ -281,8 +352,10 @@ flowchart LR
 
 ### Runtime flow
 
-1. The portal loads scenario metadata (`GET /api/scenarios`, `GET /api/toolboxes`).
-2. The user starts a scenario (`POST /api/run`, body `{ "scenario": "...", "message": "..." }`).
+1. The portal loads scenario metadata (`GET /api/scenarios`, `GET /api/toolboxes`) and the
+   deployment labels (`GET /api/health` → `environment_name`, `model_deployment_name`).
+2. The user starts a scenario (`POST /api/run`, body `{ "scenario": "...", "message": "..." }`,
+   plus `webiq_query` and the `X-WebIQ-Key` header only when optional WebIQ enrichment is used).
    The response is a **Server-Sent Events** stream, so the portal renders a **live activity
    feed** (lifecycle phases plus the real governed tool calls — `load_skill`, `web`,
    `sec-edgar___*`) instead of a static spinner while the run is in flight.
@@ -300,7 +373,12 @@ flowchart LR
 6. The API parses the sentinel, downloads the blob privately with managed identity, strips
    any dead `sandbox:/mnt/data/...` links the model may have narrated, and streams the
    clean narrative (rendered as markdown) plus a real **download button** per artifact
-   (`GET /api/artifacts/{id}`) to the portal.
+   (`GET /api/artifacts/{id}`) to the portal. Artifact ids are stateless and durable (they
+   encode the blob reference), so downloads work on any API replica.
+7. The final `done` event carries an outcome: `complete`, `partial` (for example only a
+   narrative *summary* file could be produced, or WebIQ returned nothing) or `error`. The
+   portal shows *Complete*, *Partial result* or *Attention needed* accordingly and labels a
+   summary-only file as such rather than presenting it as the requested model or deck.
 
 ## Design principles (do not regress)
 
@@ -347,7 +425,7 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Download buttons missing — only a `*_agent_summary.*` fallback file appears; agent logs `AuthorizationFailure` on blob upload | Storage `publicNetworkAccess` was flipped to `Disabled` — often by a subscription/management-group **Azure Policy** *after* deploy. The error wording is identical to a missing RBAC role, but the instance identities already hold `Storage Blob Data Contributor`; it's a **network** block, not identity. | `deploy.ps1` self-heals via `scripts/ensure_storage_public.ps1` at step 1 and step 7 (re-asserts Enabled, verifies it stuck, and creates a Waiver exemption if a `modify` policy is reverting it — a plain `az storage account update` silently no-ops under such a policy). `scripts/validate.py` and `scripts/capture_screenshots.ps1` now fail this condition instead of accepting the fallback OOXML. If you lack `policyExemptions/write`, ask a Policy owner for an RG exemption, or use private endpoints. |
+| Only a "Download summary only" file appears and the run shows *Partial result*; or agent logs `AuthorizationFailure` on blob upload | Storage `publicNetworkAccess` was flipped to `Disabled` — often by a subscription/management-group **Azure Policy** *after* deploy. The error wording is identical to a missing RBAC role, but the instance identities already hold `Storage Blob Data Contributor`; it's a **network** block, not identity. | `deploy.ps1` self-heals via `scripts/ensure_storage_public.ps1` at step 1 and step 7 (re-asserts Enabled, verifies it stuck, and creates a Waiver exemption if a `modify` policy is reverting it — a plain `az storage account update` silently no-ops under such a policy). `scripts/validate.py` and `scripts/capture_screenshots.ps1` now fail this condition instead of accepting the fallback OOXML. If you lack `policyExemptions/write`, ask a Policy owner for an RG exemption, or use private endpoints. |
 | `deploy.ps1` stops at infra with "could not resolve principal id" | `az ad signed-in-user show` returned nothing — usually a Conditional Access / CAE token challenge. | Re-run with `-PrincipalId <your-object-id>` (`az ad signed-in-user show --query id -o tsv`, or copy the `oid` from the error). |
 | Skill registration fails with an `agents/read` permission error | Developer RBAC was skipped because the principal id resolved blank on an older run. | Fixed by the fail-fast principal resolver above; if you already hit it, assign **Azure AI User** + **Cognitive Services User** to your object ID on the Foundry account and resume with `-SkipInfra`. |
 | Infra fails with `ManagedEnvironmentCapacityHeavyUsageError` | The region has model quota but is out of **Container Apps** capacity (independent of model quota). | Deploy in another region (East US 2 is the tested default). |
@@ -355,7 +433,8 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 | `az acr build` exits non-zero with `UnicodeEncodeError: 'charmap'` on Windows | Cosmetic crash in the CLI's log streamer; the server-side build actually **succeeded**. | Ignore the exit code and verify with `az acr task list-runs --registry <acr> --top 1 -o table`. `deploy.ps1` handles this automatically. |
 | `azd deploy` or `azd ai skill/toolbox` fails with `AzureDeveloperCLICredential: exit status 1` | azd's CLI-delegated credential flakes intermittently (~1 in 3) under back-to-back calls, independent of `az` token latency. | Expected and self-correcting: `provision_foundry.ps1` wraps every `azd` call in a bounded retry and re-verifies toolbox deletion via `toolbox list` (with `--force`) before re-creating; `deploy.ps1` retries each agent deploy 3×. Ensure `azd config set auth.useAzCliAuth true` and that `az login` covers the `https://ai.azure.com/.default` scope. |
 | A scenario 408-times out (~360s), or validation reports 2/3 | A heavy single prompt (deep SEC retrieval + full multi-sheet model) at the model layer, or a transient `500`/`429` on the poll GET. | Expected: the BFF retries the poll, runs a corrective artifact turn, and finally emits a **type-correct** fallback file. Re-run the single scenario. |
-| Provisioning (step 1) fails `InsufficientQuota` with no live resources present | A previously-deleted env left a **soft-deleted Foundry account** still holding model TPM. | `az cognitiveservices account list-deleted -o table`, then `az cognitiveservices account purge ...` (see runbook §10). |
+| `deploy.ps1` stops with "Missing required model parameter(s)" | v1.0.0 has no model default. | Pass `-ModelName`, `-ModelVersion` and `-ModelCapacity` (see [Choose a model](#choose-a-model-and-check-quota)). |
+| Provisioning (step 1) fails `InsufficientQuota` | The chosen model's GlobalStandard quota is subscription-global and already used by other deployments, or a **soft-deleted Foundry account** still holds TPM. | Check `az cognitiveservices usage list` for the model and lower `-ModelCapacity`; list soft-deleted accounts with `az cognitiveservices account list-deleted -o table` and purge unused ones (see runbook §10). |
 | SEC EDGAR tools never fire | SEC MCP not deployed / `SEC_EDGAR_MCP_URL` unset, or `SEC_EDGAR_USER_AGENT` (a real contact string) missing on the MCP app. | Deploy with `-SecEdgarUserAgent "Name (you@example.com)"`, confirm `SEC_EDGAR_MCP_URL` is set and bound into the toolboxes. SEC EDGAR is optional; web search still grounds the analysis. |
 | Redeployed an agent but behavior didn't change | The deployed copy in `agents/hosted/_azd/agent-src/` is stale. | Re-sync before deploying and confirm with `Get-FileHash` (see runbook §4). |
 
@@ -365,6 +444,7 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 .
 ├── deploy.ps1              # one-command end-to-end deploy orchestrator
 ├── .env.example            # every configurable variable, documented
+├── CHANGELOG.md            # release history (docs/release-notes/ has per-release notes)
 ├── infra/                  # subscription-scoped bicep (RG, Foundry, ACR, Storage, KV, ACA, RBAC)
 ├── agents/
 │   ├── hosted/             # env-driven hosted-agent runtime + Blob artifact egress + azd project
@@ -373,8 +453,44 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
 ├── api/                    # FastAPI BFF (background Responses, SSE, artifact proxy)
 ├── portal/                 # Next.js portal (3 scenario tabs, streaming, artifact download)
 ├── scripts/                # deploy helpers, declarative Foundry provisioning, end-to-end validator
-└── docs/runbook.md         # operations runbook, RBAC, gotchas, teardown
+│   └── tests/              # script unit tests (CORS validator, storage opt-out, azd env mapping)
+└── docs/                   # runbook (operations, RBAC, gotchas, teardown), release notes, images
 ```
+
+## Testing
+
+Local gates (no Azure access needed) — run from the repo root. GitHub Actions
+([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the same gates on every pull request.
+
+```powershell
+# API (FastAPI BFF, WebIQ enrichment, run flow)
+pip install -r api/requirements.txt
+$env:PROJECT_ENDPOINT = 'https://example.services.ai.azure.com/api/projects/p'
+$env:STORAGE_BLOB_ENDPOINT = 'https://example.blob.core.windows.net'
+python -m unittest api.tests.test_webiq api.tests.test_run_flow
+
+# SEC EDGAR MCP server (fact pack + MCP registration)
+pip install -r agents/mcp/sec-edgar/requirements.txt pytest
+python -m pytest agents/mcp/sec-edgar/tests
+
+# Hosted runtime contract + agent-src mirror check (stdlib only)
+python agents/hosted/tests/test_runtime_contract.py
+
+# Scripts
+python -m unittest scripts.tests.test_validate_cors
+./scripts/tests/test_storage_policy_opt_out.ps1
+./scripts/tests/test_azd_environment_mapping.ps1
+
+# Portal
+cd portal; npm ci; npm test; npm run build; npm run typecheck
+npx playwright install chromium; npm run test:browser   # mocked-API browser tests
+
+# Infra
+az bicep build --file infra/main.bicep --outfile infra/main.json
+```
+
+After a deployment, `python scripts/validate.py --portal-origin <portal-url>` (with
+`API_BASE_URL` set) runs all three scenarios end to end and checks CORS from the portal origin.
 
 ## Reusing this pattern for your own skills
 
@@ -386,8 +502,10 @@ detail and manual repair steps live in [`docs/runbook.md` §8](docs/runbook.md#8
    `$Skills` list as needed.
 2. **Map skills to scenarios.** Edit the per-toolbox `skills` lists in the `$Toolboxes`
    definition in `scripts/provision_foundry.ps1` and the scenario metadata in `api/app/config.py`.
-3. **Add scenarios or change models** via `agents/hosted/_azd/azure.yaml` (one service per
-   scenario, env-driven) and the `agentModelDeploymentName` parameter in `infra/main.bicep`.
+3. **Add scenarios or change models.** Scenarios live in `agents/hosted/_azd/azure.yaml` (one
+   service per scenario, env-driven). The model is chosen at deploy time with `-ModelName`,
+   `-ModelVersion`, `-ModelSku` and `-ModelCapacity` (the `modelName`/`modelVersion`/`modelSku`/
+   `modelCapacity`/`agentModelDeploymentName` parameters of `infra/main.bicep`).
 4. **Add more MCP servers — SEC EDGAR is just one of many.** The self-hosted SEC EDGAR server is
    only the reference MCP connection wired into this demo; it is not special. Register any
    additional MCP server (vendor or open-source) as a governed Foundry `remote-tool` connection,

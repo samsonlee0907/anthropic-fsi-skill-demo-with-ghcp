@@ -93,6 +93,9 @@ def build_app():
         transport_security=transport_security,
     )
     register_tools(mcp)
+    from financial_fact_pack import get_financial_fact_pack
+
+    mcp.tool()(get_financial_fact_pack)
 
     app = mcp.streamable_http_app()
     app.router.routes.append(Route("/healthz", _health, methods=["GET"]))

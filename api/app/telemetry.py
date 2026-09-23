@@ -16,6 +16,11 @@ _configured = False
 def configure() -> bool:
     """Configure Azure Monitor once. Returns True if telemetry is active."""
     global _configured
+    header_setting = "OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SANITIZE_FIELDS"
+    configured_headers = os.environ.get(header_setting, "")
+    os.environ[header_setting] = ",".join(
+        filter(None, [configured_headers, "x-webiq-key", "x-apikey"])
+    )
     if _configured:
         return bool(_CONN)
     _configured = True

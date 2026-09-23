@@ -22,8 +22,39 @@
 
     Re-run safely; use the -Skip* switches to resume after a failure.
 
+    There is NO built-in model default. You must supply the model name, version and
+    capacity (and optionally SKU / deployment alias). Suggested: gpt-6-astra 2026-09-03
+    GlobalStandard; alternatives: gpt-6-sol or gpt-6-luna. Catalogs, versions and quota
+    differ by region and subscription, so confirm them first:
+      az cognitiveservices model list -l <location> --query "[?model.name=='<model>'].{version:model.version,skus:model.skus[].name}"
+      az cognitiveservices usage list -l <location> --query "[?contains(name.value,'<model>')]"
+    GlobalStandard quota is subscription-GLOBAL per model (shared by every region and
+    resource group), so pick a capacity that fits the free quota.
+
+.PARAMETER ModelName
+    REQUIRED (unless -SkipInfra). Catalog model name, e.g. gpt-6-astra.
+
+.PARAMETER ModelVersion
+    REQUIRED (unless -SkipInfra). Exact catalog model version, e.g. 2026-09-03.
+
+.PARAMETER ModelCapacity
+    REQUIRED (unless -SkipInfra). Deployment capacity in thousands of tokens per minute.
+
+.PARAMETER ModelSku
+    Deployment SKU (default GlobalStandard).
+
+.PARAMETER ModelDeploymentName
+    Deployment alias the agents call. Defaults to -ModelName (or, with -SkipInfra, to the
+    AZURE_AI_MODEL_DEPLOYMENT_NAME output of the existing deployment).
+
+.PARAMETER DemoStoragePolicyOptOut
+    Demo-only: tag the STORAGE ACCOUNT ONLY with SecurityControl=Ignore when a
+    subscription policy that honors that tag would otherwise disable its public network
+    access. Never enables anonymous blob access or shared keys (Entra-only data access).
+
 .EXAMPLE
     ./deploy.ps1 -EnvName fsi-demo -Location eastus2 `
+        -ModelName gpt-6-astra -ModelVersion 2026-09-03 -ModelSku GlobalStandard -ModelCapacity 100 `
         -SecEdgarUserAgent "Jane Doe (jane@example.com)"
 #>
 [CmdletBinding()]
@@ -32,8 +63,12 @@ param(
     [string]$Location = 'eastus2',
     [string]$SubscriptionId = '',
     [string]$PrincipalId = '',
-    [string]$ModelDeploymentName = 'gpt-5.4',
-    [int]$ModelCapacity = 150,
+    [string]$ModelName = '',
+    [string]$ModelVersion = '',
+    [string]$ModelSku = 'GlobalStandard',
+    [int]$ModelCapacity = 0,
+    [string]$ModelDeploymentName = '',
+    [switch]$DemoStoragePolicyOptOut,
     [string]$SecEdgarUserAgent = '',
     [switch]$SkipInfra,
     [switch]$SkipSkills,
@@ -128,6 +163,22 @@ function Invoke-AcrBuild {
 }
 
 Write-Host "== Preflight ==" -ForegroundColor Cyan
+if (-not $SkipInfra) {
+    $missingModel = @()
+    if (-not $ModelName) { $missingModel += '-ModelName' }
+    if (-not $ModelVersion) { $missingModel += '-ModelVersion' }
+    if ($ModelCapacity -lt 1) { $missingModel += '-ModelCapacity' }
+    if ($missingModel.Count) {
+        throw @"
+Missing required model parameter(s): $($missingModel -join ', '). There is no built-in model default.
+Example: ./deploy.ps1 -EnvName $EnvName -Location $Location -ModelName gpt-6-astra -ModelVersion 2026-09-03 -ModelSku GlobalStandard -ModelCapacity 100
+Confirm availability, version and free quota in your region/subscription first:
+  az cognitiveservices model list -l $Location --query "[?model.name=='<model>'].{version:model.version,skus:model.skus[].name}"
+  az cognitiveservices usage list -l $Location --query "[?contains(name.value,'<model>')]"
+"@
+    }
+    if (-not $ModelDeploymentName) { $ModelDeploymentName = $ModelName }
+}
 'az', 'azd', 'python', 'gh' | ForEach-Object { Require-Tool $_ }
 
 # Fail fast if the declarative Foundry provisioning would run without the azd `ai`
@@ -138,7 +189,8 @@ if (-not $SkipSkills) {
     $aiExt = azd extension list --installed 2>$null | Out-String
     $missing = @()
     foreach ($id in 'azure.ai.skills', 'azure.ai.connections', 'azure.ai.toolboxes') {
-        if ($aiExt -notmatch [regex]::Escape($id)) { $missing += $id }
+        # The unified microsoft.foundry bundle provides all three command groups.
+        if ($aiExt -notmatch 'microsoft\.foundry' -and $aiExt -notmatch [regex]::Escape($id)) { $missing += $id }
     }
     if ($missing.Count) {
         throw "Missing azd Foundry extensions for declarative provisioning: $($missing -join ', '). Install with: azd extension install $($missing -join ' ')  (or 'azd ext install microsoft.foundry')."
@@ -147,11 +199,11 @@ if (-not $SkipSkills) {
 
 # Verify an azd Foundry extension providing `azd ai agent` + hosted-agent `azd deploy`
 # is present. Accept either packaging: the GA unified bundle `microsoft.foundry` or the
-# legacy individual `azure.ai.agents` beta. Skip the check when not deploying agents.
+# individual `azure.ai.agents` extension. Skip the check when not deploying agents.
 if (-not $SkipAgents) {
     $agentsExt = azd extension list --installed 2>$null | Select-String -Pattern 'microsoft\.foundry|azure\.ai\.agents'
     if (-not $agentsExt) {
-        throw "azd Foundry extension not installed. Install the GA unified bundle: 'azd ext install microsoft.foundry' (or the legacy 'azd extension install azure.ai.agents'). Verify with: azd ai agent --help"
+        throw "azd Foundry extension not installed. Install the GA unified bundle: 'azd ext install microsoft.foundry' (or the individual 'azd extension install azure.ai.agents'). Verify with: azd ai agent --help"
     }
 }
 
@@ -178,7 +230,8 @@ azd config set auth.useAzCliAuth true 2>$null | Out-Null
 # 1. Infra
 # ---------------------------------------------------------------------------
 if (-not $SkipInfra) {
-    Write-Host "== 1. Provisioning infra ($EnvName / $Location) ==" -ForegroundColor Cyan
+    Write-Host "== 1. Provisioning infra ($EnvName / $Location, model $ModelName $ModelVersion $ModelSku x$ModelCapacity) ==" -ForegroundColor Cyan
+    $storageOptOut = $DemoStoragePolicyOptOut.IsPresent.ToString().ToLowerInvariant()
     $depJson = az deployment sub create `
         --name "fsi-$EnvName" `
         --location $Location `
@@ -186,7 +239,8 @@ if (-not $SkipInfra) {
         --parameters environmentName=$EnvName location=$Location `
                      developerPrincipalId=$PrincipalId `
                      agentModelDeploymentName=$ModelDeploymentName `
-                     modelCapacity=$ModelCapacity `
+                     modelName=$ModelName modelVersion=$ModelVersion modelSku=$ModelSku `
+                     modelCapacity=$ModelCapacity demoStoragePolicyOptOut=$storageOptOut `
         -o json
     Assert-LastExit 'az deployment sub create'
     $dep = $depJson | ConvertFrom-Json
@@ -208,9 +262,11 @@ $storageAccount   = $o.AZURE_STORAGE_ACCOUNT.value
 $managedIdId      = $o.AZURE_MANAGED_IDENTITY_ID.value
 $apiUrl           = $o.API_URL.value
 $portalUrl        = $o.PORTAL_URL.value
+if (-not $ModelDeploymentName) { $ModelDeploymentName = $o.AZURE_AI_MODEL_DEPLOYMENT_NAME.value }
+if (-not $ModelDeploymentName) { throw 'Could not resolve the model deployment name from infra outputs; pass -ModelDeploymentName.' }
 $env:PROJECT_ENDPOINT = $projectEndpoint
 Write-Host "  project=$projectEndpoint"
-Write-Host "  rg=$rg acr=$acrName api=$apiUrl"
+Write-Host "  rg=$rg acr=$acrName api=$apiUrl model=$ModelDeploymentName"
 
 # Guard: an Azure Policy 'modify' effect can flip storage publicNetworkAccess to
 # Disabled at ARM-create time even though the bicep sets Enabled. With no private
@@ -219,7 +275,8 @@ Write-Host "  rg=$rg acr=$acrName api=$apiUrl"
 # role. The helper re-asserts Enabled AND verifies it stuck (self-healing around a
 # modify policy via a scoped Waiver exemption); it is a no-op in a clean subscription.
 if (-not $SkipInfra) {
-    & (Join-Path $repo 'scripts\ensure_storage_public.ps1') -ResourceGroup $rg -StorageAccountName $storageAccount
+    & (Join-Path $repo 'scripts\ensure_storage_public.ps1') -ResourceGroup $rg -StorageAccountName $storageAccount `
+        -DemoPolicyOptOut:$DemoStoragePolicyOptOut
 }
 
 # ---------------------------------------------------------------------------
@@ -254,10 +311,19 @@ $fsiMcpKey = & (Join-Path $repo 'scripts\set_azd_env_from_infra.ps1') `
     -ModelDeploymentName $ModelDeploymentName -SecEdgarMcpUrl $secMcpUrl `
     -FsiMcpKey $fsiMcpKey -EnvName $EnvName -AzdDir $azdDir -ResourceGroup $rg | Select-Object -Last 1
 Push-Location $azdDir
-$azSub = az account show --query id -o tsv 2>$null
-azd env set AZURE_SUBSCRIPTION_ID $azSub | Out-Null
-azd env set AZURE_LOCATION $Location | Out-Null
-Pop-Location
+try {
+    $azAccount = az account show -o json | ConvertFrom-Json
+    Assert-LastExit 'resolve deployment account'
+    $azSub = $azAccount.id
+    azd env set AZURE_SUBSCRIPTION_ID $azSub | Out-Null
+    Assert-LastExit 'set azd subscription'
+    azd env set AZURE_TENANT_ID $azAccount.tenantId | Out-Null
+    Assert-LastExit 'set azd tenant'
+    azd env set AZURE_RESOURCE_GROUP $rg | Out-Null
+    Assert-LastExit 'set azd resource group'
+    azd env set AZURE_LOCATION $Location | Out-Null
+    Assert-LastExit 'set azd location'
+} finally { Pop-Location }
 
 # Align azd's DEFAULT subscription with the active az context. The `azd ai`
 # extensions mint Azure tokens via a delegated-credential subprocess; if azd's
@@ -282,9 +348,14 @@ if (-not $SkipSkills) {
 if (-not $SkipAgents) {
     Write-Host "== 5. Deploying hosted agents ==" -ForegroundColor Cyan
     # Sync runtime source into the azd agent-src copy (critical: stale copies ship old behavior).
-    Copy-Item (Join-Path $hostedDir 'fsi_hosted_agent.py') (Join-Path $azdDir 'agent-src\fsi_hosted_agent.py') -Force
-    Copy-Item (Join-Path $hostedDir 'fsi_artifact_egress.py') (Join-Path $azdDir 'agent-src\fsi_artifact_egress.py') -Force
-    Copy-Item (Join-Path $hostedDir 'requirements.txt')       (Join-Path $azdDir 'agent-src\requirements.txt') -Force
+    foreach ($sourceName in @('fsi_hosted_agent.py', 'fsi_artifact_egress.py', 'requirements.txt')) {
+        $sourcePath = Join-Path $hostedDir $sourceName
+        $targetPath = Join-Path (Join-Path $azdDir 'agent-src') $sourceName
+        Copy-Item $sourcePath $targetPath -Force
+        if ((Get-FileHash $sourcePath).Hash -ne (Get-FileHash $targetPath).Hash) {
+            throw "Hosted source sync failed for $sourceName."
+        }
+    }
 
     $env:GH_TOKEN = (gh auth token)
     $env:GITHUB_TOKEN = $env:GH_TOKEN
@@ -322,7 +393,8 @@ if (-not $SkipAgents) {
 # exemption. (Data stays protected by Entra ID RBAC only; shared-key + anonymous off.)
 # ---------------------------------------------------------------------------
 Write-Host "== 7. Ensuring storage public network access ==" -ForegroundColor Cyan
-& (Join-Path $repo 'scripts\ensure_storage_public.ps1') -ResourceGroup $rg -StorageAccountName $storageAccount
+& (Join-Path $repo 'scripts\ensure_storage_public.ps1') -ResourceGroup $rg -StorageAccountName $storageAccount `
+    -DemoPolicyOptOut:$DemoStoragePolicyOptOut
 
 # ---------------------------------------------------------------------------
 # 8. Build + deploy API and portal images
@@ -347,9 +419,10 @@ if (-not $SkipApps) {
 # 9. Validate
 # ---------------------------------------------------------------------------
 if (-not $SkipValidate) {
-    Write-Host "== 9. Validating scenarios ==" -ForegroundColor Cyan
+    Write-Host "== 9. Validating browser CORS and scenarios ==" -ForegroundColor Cyan
     $env:API_BASE_URL = $apiUrl
-    python (Join-Path $repo 'scripts\validate.py')
+    python (Join-Path $repo 'scripts\validate.py') --portal-origin $portalUrl
+    Assert-LastExit 'scenario validation'
 }
 
 Write-Host ""

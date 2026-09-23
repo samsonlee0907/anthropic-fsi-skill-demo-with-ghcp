@@ -1,7 +1,7 @@
 export type RunEvent =
   | {
       type: 'status';
-      stage: 'start' | 'submitting' | 'working' | 'retrying' | 'ensuring_artifact';
+      stage: 'start' | 'submitting' | 'working' | 'retrying' | 'ensuring_artifact' | 'webiq_search';
       scenario: string;
       title?: string;
       toolbox?: string;
@@ -37,6 +37,20 @@ export type RunEvent =
       filename: string;
       url?: string;
       error?: string;
+      kind?: 'generated' | 'summary';
+      persisted?: boolean;
+    }
+  | {
+      type: 'enrichment';
+      provider: 'webiq';
+      status: 'ready' | 'empty' | 'failed';
+      message: string;
+      sources: EnrichmentSource[];
+    }
+  | {
+      type: 'warning';
+      agent?: string;
+      message: string;
     }
   | {
       type: 'error';
@@ -49,7 +63,17 @@ export type RunEvent =
     }
   | {
       type: 'done';
+      outcome?: 'complete' | 'partial' | 'error';
     };
+
+export type EnrichmentSource = {
+  id: string;
+  title: string;
+  url: string;
+  published_at: string | null;
+  updated_at?: string | null;
+  crawled_at?: string | null;
+};
 
 export async function consumeSseStream<TEvent extends { type: string }>(
   input: RequestInfo | URL,
@@ -59,9 +83,8 @@ export async function consumeSseStream<TEvent extends { type: string }>(
   const response = await fetch(input, init);
 
   if (!response.ok) {
-    const details = await safeReadText(response);
     throw new Error(
-      `Workflow request failed (${response.status} ${response.statusText})${details ? `: ${details}` : ''}`
+      `Workflow request failed (${response.status}). Check the configuration and retry.`
     );
   }
 
@@ -71,72 +94,67 @@ export async function consumeSseStream<TEvent extends { type: string }>(
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  let line = '';
+  let data: string[] = [];
+  let afterCR = false;
+  let terminal = false;
+  let frameLength = 0;
 
-  while (true) {
-    const { done, value } = await reader.read();
-
-    if (done) {
-      buffer += decoder.decode();
-      flushBuffer(buffer, onEvent);
-      return;
+  function consumeLine() {
+    if (line === '') {
+      if (data.length > 0) {
+        let event: unknown;
+        try {
+          event = JSON.parse(data.join('\n'));
+        } catch {
+          throw new Error('The workflow returned an invalid event. Please retry.');
+        }
+        if (!event || typeof event !== 'object' || !('type' in event) || typeof event.type !== 'string') {
+          throw new Error('The workflow returned an invalid event. Please retry.');
+        }
+        onEvent(event as TEvent);
+        terminal = event.type === 'done';
+      }
+      data = [];
+      frameLength = 0;
+    } else if (line === 'data' || line.startsWith('data:')) {
+      data.push(line === 'data' ? '' : line.slice(5).replace(/^ /, ''));
     }
+    line = '';
+  }
 
-    buffer += decoder.decode(value, { stream: true });
-    const frames = buffer.split(/\r?\n\r?\n/);
-    buffer = frames.pop() ?? '';
-
-    for (const frame of frames) {
-      emitFrame(frame, onEvent);
+  function consumeText(text: string) {
+    for (const character of text) {
+      if (afterCR) {
+        afterCR = false;
+        if (character === '\n') continue;
+      }
+      if (character === '\r' || character === '\n') {
+        consumeLine();
+        afterCR = character === '\r';
+        if (terminal) return;
+      } else {
+        line += character;
+        if (++frameLength > 2_000_000) {
+          throw new Error('The workflow event exceeded the supported size.');
+        }
+      }
     }
   }
-}
-
-async function safeReadText(response: Response): Promise<string> {
-  try {
-    return (await response.text()).trim();
-  } catch {
-    return '';
-  }
-}
-
-function flushBuffer<TEvent extends { type: string }>(
-  buffer: string,
-  onEvent: (event: TEvent) => void
-): void {
-  if (buffer.trim().length > 0) {
-    emitFrame(buffer, onEvent);
-  }
-}
-
-function emitFrame<TEvent extends { type: string }>(
-  frame: string,
-  onEvent: (event: TEvent) => void
-): void {
-  const payload = extractDataPayload(frame);
-
-  if (!payload) {
-    return;
-  }
 
   try {
-    onEvent(JSON.parse(payload) as TEvent);
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : 'Unknown parse error';
-    throw new Error(`Invalid SSE data frame: ${reason}`);
+    while (!terminal) {
+      const { done, value } = await reader.read();
+      consumeText(done ? decoder.decode() : decoder.decode(value, { stream: true }));
+      if (done && !terminal) {
+        throw new Error('The workflow connection ended before completion. The run may still be active.');
+      }
+    }
+  } finally {
+    try {
+      await reader.cancel();
+    } finally {
+      reader.releaseLock();
+    }
   }
-}
-
-function extractDataPayload(frame: string): string | null {
-  const dataLines = frame
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.replace(/^data:\s?/, ''));
-
-  if (dataLines.length === 0) {
-    return null;
-  }
-
-  const payload = dataLines.join('\n').trim();
-  return payload.length > 0 ? payload : null;
 }

@@ -4,11 +4,13 @@ param location string
 param tags object
 param storageAccountName string
 param principalIds array = []
+@description('Explicitly approved governance tags for this storage account only; not propagated to its resource group or other resources.')
+param governanceTags object = {}
 
 resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
   location: location
-  tags: tags
+  tags: union(tags, governanceTags)
   sku: {
     name: 'Standard_LRS'
   }

@@ -63,10 +63,11 @@ The default scenario set (`equity-research,ib-pitch`) yields one `.xlsx` and one
 
 1. **`screenshots/capture_portal.mjs`** (Playwright) drives the portal like a user:
    loads the gallery, clicks a scenario card, fills the default Microsoft prompt via the
-   preset button, runs the workflow, waits for the real artifact download button
-   (`a.artifactChip`) to appear on the **latest** agent card, screenshots the completed
-   run, downloads each artifact via the API, and rejects fallback summary files so a
-   broken portal run cannot silently refresh the README images. Headless by default, so
+   preset button, runs the workflow, waits for the workflow badge (`.runBadge`) to report
+   **Complete** (a *Partial result* or error fails the capture), screenshots the completed
+   run, downloads each artifact by clicking its download button on the **latest** agent
+   card, checks the OOXML (`PK`) signature, and rejects fallback summary files so a broken
+   portal run cannot silently refresh the README images. Headless by default, so
    no browser address bar (and therefore no tenant hostname) is captured. Retina scale
    (`deviceScaleFactor: 2`).
 2. **`screenshots/capture_office.ps1`** (Office COM) renders each downloaded artifact:

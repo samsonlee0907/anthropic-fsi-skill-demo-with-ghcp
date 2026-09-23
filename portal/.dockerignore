@@ -2,6 +2,10 @@ node_modules
 .next
 out
 coverage
+.test-build
+test-results
+playwright-report
+blob-report
 .git
 .gitignore
 .env

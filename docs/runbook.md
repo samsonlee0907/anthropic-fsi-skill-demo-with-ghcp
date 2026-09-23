@@ -21,7 +21,7 @@ mandate to target any public ticker.
 | Foundry project | `proj-<env>` |
 | Storage account | `st<token>` |
 | Container Registry | `acr<token>` |
-| Key Vault | `kv-<env>-<token>` |
+| Key Vault | `kv-<first 12 chars of env>-<token>` (Key Vault names are limited to 24 characters) |
 | App Insights / Log Analytics | `appi-<env>-<token>` / `log-<env>-<token>` |
 | Container Apps env | `cae-<env>-<token>` |
 | API / Portal apps | `ca-api-<env>` / `ca-portal-<env>` |
@@ -32,20 +32,30 @@ mandate to target any public ticker.
 
 ## 2. Prerequisites
 
-- Azure subscription with Foundry model quota in the target region for the deployments in the
-  `modelDeployments` param (default: a single `gpt-5.4` GlobalStandard deployment at 150K TPM).
-  Add models or change capacity/region via that param to fit your quota; keep
-  `agentModelDeploymentName` in the list. For a quick capacity override without editing bicep,
-  pass `deploy.ps1 -ModelCapacity <thousands-of-TPM>` (default `150`). Note: `gpt-5.4`
-  GlobalStandard quota is **subscription-global** — every region reports the same used/limit — so
-  freeing it means deleting *and purging* an unused Foundry (AIServices) account, not just
-  switching region.
+- **A model you choose — there is no built-in default.** `deploy.ps1` requires `-ModelName`,
+  `-ModelVersion` and `-ModelCapacity` (thousands of TPM); `-ModelSku` defaults to
+  `GlobalStandard` and `-ModelDeploymentName` defaults to the model name. These feed the
+  `modelName` / `modelVersion` / `modelSku` / `modelCapacity` / `agentModelDeploymentName`
+  parameters of `infra/main.bicep`, which build the single `modelDeployments` entry. Suggested:
+  `gpt-6-astra` version `2026-09-03` GlobalStandard; alternatives `gpt-6-sol` `2026-09-22` or
+  `gpt-6-luna` `2026-09-22`. Confirm availability and free quota first:
+  ```powershell
+  $model = 'gpt-6-astra'; $region = 'eastus2'
+  az cognitiveservices model list -l $region `
+    --query "[?model.name=='$model'].{version:model.version,skus:model.skus[].name}" -o json
+  az cognitiveservices usage list -l $region `
+    --query "[?contains(name.value,'$model')].{name:name.value,used:currentValue,limit:limit}" -o table
+  ```
+  GlobalStandard quota is **subscription-global per model** — every region reports the same
+  used/limit, and every deployment of that model in the subscription consumes it — so freeing it
+  means reducing or deleting *and purging* another deployment of that model, not switching
+  region. Pick a capacity that fits `limit - used`.
 - Region must satisfy **both** model quota **and** Container Apps capacity; these are independent.
   East US 2 is the tested default. Some regions (observed: Sweden Central) can have model quota but
   be out of Container Apps managed-environment capacity (`ManagedEnvironmentCapacityHeavyUsageError`)
   — switch regions if you hit that at the infra step.
 - `az`, `azd` (with the Foundry extensions — install the GA unified bundle with
-  `azd ext install microsoft.foundry`, or the legacy individual betas
+  `azd ext install microsoft.foundry`, or the individual extensions
   `azd extension install azure.ai.agents azure.ai.skills azure.ai.connections azure.ai.toolboxes`;
   either works, verify with `azd ai agent --help`),
   `gh` (authenticated), Python 3.11+ (for the API/portal builds and `scripts/validate.py`).
@@ -73,8 +83,14 @@ mandate to target any public ticker.
      --template-file infra/main.bicep `
      --parameters environmentName=<env> location=<location> `
                   developerPrincipalId=<your-object-id> `
-                  agentModelDeploymentName=gpt-5.4
+                  modelName=gpt-6-astra modelVersion=2026-09-03 `
+                  modelSku=GlobalStandard modelCapacity=<thousands-of-TPM> `
+                  agentModelDeploymentName=gpt-6-astra `
+                  demoStoragePolicyOptOut=false
    ```
+   `infra/main.parameters.json` does not carry model values; pass them as above (or add them to
+   your own parameters file). `demoStoragePolicyOptOut=true` (`deploy.ps1
+   -DemoStoragePolicyOptOut`) is described in §8.
 2. **(Optional) Deploy the SEC EDGAR MCP** Container App and generate its shared secret:
    ```powershell
    ./scripts/deploy_sec_edgar.ps1 -ResourceGroup rg-<env> -RegistryName acr<token> `
@@ -85,7 +101,7 @@ mandate to target any public ticker.
    derived `TOOLBOX_ENDPOINT_*`, `SEC_EDGAR_MCP_URL` / `FSI_MCP_KEY`):
    ```powershell
    ./scripts/set_azd_env_from_infra.ps1 -ProjectEndpoint <...> -StorageBlobEndpoint <...> `
-     -ModelDeploymentName gpt-5.4 -EnvName <env>
+     -ModelDeploymentName <model-deployment-name> -EnvName <env>
    ```
 4. **Provision skills + SEC connection + toolboxes declaratively** with `azd ai` (GA):
    ```powershell
@@ -174,7 +190,9 @@ az containerapp update -n ca-portal-<env> -g rg-<env> `
 ```
 
 The API's environment variables (`PROJECT_ENDPOINT`, `STORAGE_BLOB_ENDPOINT`,
-`ARTIFACTS_CONTAINER`, `AZURE_CLIENT_ID`, `APPLICATIONINSIGHTS_CONNECTION_STRING`) are wired
+`ARTIFACTS_CONTAINER`, `AZURE_CLIENT_ID`, `APPLICATIONINSIGHTS_CONNECTION_STRING`, plus the
+display labels `FSI_ENVIRONMENT_NAME` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` reported by
+`/api/health`) are wired
 directly from infra outputs in `infra/main.bicep`, so a fresh image picks them up without
 manual `az containerapp update --set-env-vars`.
 
@@ -182,13 +200,16 @@ manual `az containerapp update --set-env-vars`.
 
 ```powershell
 $env:API_BASE_URL = "<API_URL>"
-python scripts/validate.py                     # all scenarios
-python scripts/validate.py pe-lbo              # one scenario
+python scripts/validate.py --portal-origin <PORTAL_URL>   # all scenarios + CORS checks
+python scripts/validate.py pe-lbo                         # one scenario
 ```
 
 The validator submits to `/api/run`, reads the SSE stream, downloads the produced artifact,
 and asserts it is a real OOXML file (PK zip signature) **and not the API fallback summary
-artifact**. Exit code is non-zero on any failure, so it doubles as a CI gate.
+artifact**. With `--portal-origin` it first sends browser-style CORS preflights from the portal
+origin (`GET /api/health`, and `POST /api/run` with `content-type` + `x-webiq-key`) and fails if
+the API would not allow them. Exit code is non-zero on any failure, so it doubles as a CI gate.
+`deploy.ps1` runs it with `--portal-origin` as its final step.
 
 For a UI-path validation that also refreshes the README screenshots, run:
 
@@ -203,7 +224,7 @@ artifact or misses an expected default file type.
 Quick API checks:
 
 ```powershell
-Invoke-RestMethod <API_URL>/api/health       # { "status": "ok", ... }
+Invoke-RestMethod <API_URL>/api/health       # { "status": "ok", "environment_name": ..., "model_deployment_name": ... }
 Invoke-RestMethod <API_URL>/api/scenarios
 Invoke-RestMethod <API_URL>/api/toolboxes
 ```
@@ -226,14 +247,15 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   step 1 and again at **step 7b**; that helper re-reads the actual value and, if a policy is
   reverting it, **self-heals** by creating a resource-group-scoped **Waiver policy exemption** for
   the offending assignment, then re-applies and re-verifies. See *Storage public network access &
-  policy exemptions* at the end of this section if you can't create exemptions.
+  policy exemptions* at the end of this section if you can't create exemptions, including the
+  `-DemoStoragePolicyOptOut` tag option.
 - **A failed *download* (`{"detail":"Artifact not found"}` / the portal download button 404s) is
   often a storage-network symptom, NOT a missing file.** Downloads are durable — on a cache miss the
   BFF re-fetches the blob via managed identity (`orchestrator.resolve_artifact` → `_download_blob_sync`).
   Managed identity covers *authorization*, not *network reachability*: if `publicNetworkAccess=Disabled`
-  that re-fetch can't reach Blob Storage, `resolve_artifact()` swallows the error and returns `None`, so
-  `/api/artifacts/{id}` answers `404 "Artifact not found"` — the SAME message as a genuinely expired or
-  unknown id. So when a download fails, first check
+  that re-fetch can't reach Blob Storage. `/api/artifacts/{id}` answers `503 "Artifact storage is
+  temporarily unavailable"` for storage/network errors and `404 "Artifact not found"` only when the
+  blob genuinely does not exist, and the portal shows the matching message. So when a download fails, first check
   `az storage account show -n <acct> -g <rg> --query publicNetworkAccess -o tsv` (expect `Enabled`) and
   re-run `scripts/ensure_storage_public.ps1` before assuming the artifact expired. (This is the
   read-side mirror of the upload `AuthorizationFailure` above; the same `Disabled` account breaks both.)
@@ -278,6 +300,23 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   Container App; the Foundry gateway injects the shared-secret header (`x-fsi-mcp-key`).
   Toggle by setting/clearing `SEC_EDGAR_MCP_URL`. Upstream `sec-edgar-mcp` is AGPL-3.0 —
   review licensing before commercial redistribution.
+- **SEC financial fact pack:** the SEC EDGAR MCP server adds a `get_financial_fact_pack`
+  tool (`agents/mcp/sec-edgar/financial_fact_pack.py`) next to the upstream tools. Given a
+  ticker and an `as_of` date it selects the latest eligible 10-K from SEC submissions and returns
+  normalized annual and balance-sheet facts (revenue, operating income, net income, diluted
+  shares, operating cash flow, capex, cash, debt, assets, liabilities, equity) with the
+  accession, period and unit for each value, marking conflicts or missing values explicitly
+  rather than guessing. The runtime prompts the agents to prefer it for headline figures.
+- **WebIQ (optional) is per-request and user-supplied.** There is no server-side WebIQ
+  credential. The portal sends a user's key only in the `X-WebIQ-Key` header, and only when an
+  explicit news query is also entered; the API requires HTTPS for it (Container Apps ingress sets
+  `x-forwarded-proto`), never echoes it in validation errors, and redacts it from HTTP telemetry
+  (`OTEL_INSTRUMENTATION_HTTP_CAPTURE_HEADERS_SANITIZE_FIELDS`). WebIQ results reach the agent as
+  delimited *untrusted* context and never replace SEC figures. A failed search stops before any
+  agent run (the portal offers *Clear key and run without WebIQ*); an empty search continues as a
+  partial result. Browser CORS must allow the `x-webiq-key` request header — the Container Apps
+  CORS policy and the FastAPI middleware both allow all headers, and
+  `validate.py --portal-origin` checks it.
 - **SEC EDGAR toolbox drift:** `provision_foundry.ps1` binds the `sec-edgar` connection into each
   toolbox only when `SEC_EDGAR_MCP_URL` is set. Re-running it (or `set_azd_env_from_infra.ps1`)
   with a **blank** `SEC_EDGAR_MCP_URL` used to silently republish the toolboxes *without* SEC
@@ -290,10 +329,12 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   row (`connection:.../connections/sec-edgar`), not just `web` + `tool_search`.
 - **Transient model errors:** heavy single prompts (deep SEC retrieval + full multi-sheet
   DCF) can 408-timeout at the model layer (~360s). The BFF mitigates with one retry, one
-  corrective artifact turn, and finally a **type-correct** fallback so the portal always has a
-  downloadable file whose type matches the scenario — a `.pptx` deck for `ib-pitch`, a `.xlsx`
-  workbook for the equity/LBO scenarios (built dependency-free in `orchestrator.py`). That
-  fallback is demo resilience, not the primary path.
+  corrective artifact turn, and finally a **type-correct summary** file (a `.pptx` for
+  `ib-pitch`, a `.xlsx` for the equity/LBO scenarios, built dependency-free in `orchestrator.py`)
+  containing only the narrative. It is uploaded to the `artifacts` container like any other
+  artifact (never an ephemeral local-only download), labelled **"Download summary only"** in the
+  portal, and the run ends as a *Partial result* with a warning — it is never presented as the
+  requested model or deck. That fallback is demo resilience, not the primary path.
 - **Transient 500 on the poll GET:** the BFF submits agent runs in background mode
   (`store=true`) and polls `GET .../responses/{id}`. The Foundry gateway occasionally returns a
   cosmetic `500` (or `429`/`502`/`503`/`504`) on an otherwise-healthy in-progress run. Because the
@@ -303,6 +344,15 @@ Invoke-RestMethod <API_URL>/api/toolboxes
   caused sporadic 1/3 or 2/3 validation results.
 
 ### Storage public network access & policy exemptions
+
+**Demo-only tag opt-out.** Some demo subscriptions carry a storage policy whose documented
+exclusion is the `SecurityControl=Ignore` tag. If (and only if) your policy owner approves that
+exclusion, deploy with `-DemoStoragePolicyOptOut` (bicep `demoStoragePolicyOptOut=true`): the tag
+is applied to the **storage account only** (never the resource group), and
+`ensure_storage_public.ps1 -DemoPolicyOptOut` re-asserts it at steps 1 and 7. Anonymous blob
+access and shared-key access stay disabled, so data access remains Entra ID (RBAC) only. Other
+policy rules may honor the same tag, so treat it as an explicit governance decision, not a
+default. When resuming with `-SkipInfra`, pass the same switch again.
 
 If your subscription enforces a `modify`/`deny` policy on storage `publicNetworkAccess`, you need
 either a policy exemption or private endpoints. `scripts/ensure_storage_public.ps1` automates the
@@ -440,7 +490,8 @@ az group delete --name rg-<env> --yes --no-wait
 > ```
 >
 > Verify the quota came back with
-> `az cognitiveservices usage list --location <location> --query "[?name.value=='OpenAI.GlobalStandard.gpt-5.4']"`.
+> `az cognitiveservices usage list --location <location> --query "[?contains(name.value,'<model>')]" -o table`
+> (for example `<model>` = `gpt-6-astra`).
 
 ## 11. Official references
 

@@ -10,7 +10,9 @@
     declarative flow:
 
       1. Register the 12 Anthropic financial-analysis skills as Foundry skills
-         (`azd ai skill create <name> --file SKILL.md --force`). Skill content is
+         (`azd ai skill create <name> --file SKILL.md` for new skills, `azd ai skill
+         update` for existing ones, which adds a new default version without
+         deleting the skill that published toolboxes reference). Skill content is
          fetched at run time from a pinned Anthropic commit, then optionally
          overlaid with repo-local instructions from `skills/overrides/`.
       2. (optional) Register the self-hosted SEC EDGAR MCP server as a GOVERNED
@@ -31,12 +33,13 @@
     resources (`skill://...`) for the SDK `load_skill` progressive-disclosure path.
 
 .NOTES
-    Requires the azd `azure.ai.skills`, `azure.ai.connections` and
-    `azure.ai.toolboxes` extensions and an azd environment whose
+    Requires the azd `microsoft.foundry` extension (or the individual
+    `azure.ai.skills`, `azure.ai.connections` and `azure.ai.toolboxes`
+    extensions) and an azd environment whose
     FOUNDRY_PROJECT_ENDPOINT points at the target project. Run AFTER
     set_azd_env_from_infra.ps1 (which creates the env and seeds that variable).
-    Idempotent: skills/connection use --force; toolboxes are deleted (if present)
-    then recreated + published.
+    Idempotent: skills are created or updated, the connection uses --force, and
+    toolboxes are deleted (if present) then recreated + published.
 
     azd credential subprocess calls flake under load (`AzureDeveloperCLICredential:
     exit status 1`), so every azd call is wrapped in a retry loop.
@@ -55,7 +58,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $AzdDir = (Resolve-Path $AzdDir).Path
 
-    $RawBase = "https://raw.githubusercontent.com/anthropics/financial-services/$SkillsRef/plugins/vertical-plugins/financial-analysis/skills"
+$RawBase = "https://raw.githubusercontent.com/anthropics/financial-services/$SkillsRef/plugins/vertical-plugins/financial-analysis/skills"
 
 # The 12 runtime skills (skill-creator intentionally excluded).
 $RuntimeSkills = @(
@@ -63,6 +66,14 @@ $RuntimeSkills = @(
     'comps-analysis', 'dcf-model', 'deck-refresh', 'ib-check-deck', 'lbo-model',
     'ppt-template-creator', 'pptx-author', 'xlsx-author'
 )
+
+$unknownSkills = @($SkillsOnly | Where-Object { $_ -cnotin $RuntimeSkills })
+if ($unknownSkills.Count) {
+    throw "SkillsOnly contains unknown skill names: $($unknownSkills -join ', ')."
+}
+if (@($SkillsOnly | Select-Object -Unique).Count -ne $SkillsOnly.Count) {
+    throw 'SkillsOnly contains duplicate skill names.'
+}
 
 # scenario toolbox -> @{ description; skills[] }. Cross-cutting skills
 # (xlsx-author, clean-data-xls, audit-xls) are referenced from multiple toolboxes;
@@ -104,7 +115,7 @@ function Invoke-Azd {
         if ($LASTEXITCODE -eq 0) { return $out }
         $last = $out
         $transient = $out -match 'AzureDeveloperCLICredential|exit status 1|deadline|timeout|TooManyRequests|429|temporarily'
-        if (-not $transient) { break }
+        if (-not $transient -or $i -eq $Retries) { break }
         Write-Host ("  [retry $i/$Retries] azd $What (transient auth/throttle)")
         Start-Sleep $DelaySeconds
     }
@@ -190,15 +201,17 @@ function Get-SkillMd {
 Push-Location $AzdDir
 try {
     azd env select $EnvName | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Cannot select azd environment $EnvName." }
 
     if (-not $SecEdgarMcpUrl -or -not $FsiMcpKey) {
         $envLines = @(& azd env get-values -e $EnvName 2>$null)
+        if ($LASTEXITCODE -ne 0) { throw 'Cannot read azd environment values.' }
         foreach ($line in $envLines) {
-            if (-not $SecEdgarMcpUrl -and $line -match '^SEC_EDGAR_MCP_URL="?(.+?)"?$') {
-                $SecEdgarMcpUrl = $Matches[1]
+            if (-not $SecEdgarMcpUrl -and $line -match '^SEC_EDGAR_MCP_URL=(.*)$') {
+                $SecEdgarMcpUrl = $Matches[1].Trim('"')
             }
-            if (-not $FsiMcpKey -and $line -match '^FSI_MCP_KEY="?(.+?)"?$') {
-                $FsiMcpKey = $Matches[1]
+            if (-not $FsiMcpKey -and $line -match '^FSI_MCP_KEY=(.*)$') {
+                $FsiMcpKey = $Matches[1].Trim('"')
             }
         }
     }
@@ -206,17 +219,29 @@ try {
     # -----------------------------------------------------------------------
     # 1. Register skills
     # -----------------------------------------------------------------------
-    $skills = if ($SkillsOnly.Count) { $RuntimeSkills | Where-Object { $SkillsOnly -contains $_ } } else { $RuntimeSkills }
+    $skills = @($RuntimeSkills | Where-Object { -not $SkillsOnly.Count -or $_ -cin $SkillsOnly })
     Write-Host "== Registering $($skills.Count) skills (ref $($SkillsRef.Substring(0,7))) ==" -ForegroundColor Cyan
     $tmpRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("fsi-skills-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $tmpRoot -Force | Out-Null
     try {
+        $listText = Invoke-Azd -Args @('ai', 'skill', 'list', '-e', $EnvName, '-o', 'json') -What 'skill list'
+        $inventory = ConvertFrom-AzdJson $listText
+        if ($null -eq $inventory -and $listText -notmatch '\[\s*\]') { throw 'Could not parse azd ai skill list output.' }
+        foreach ($wrapper in @('skills', 'data', 'value')) {
+            if ($inventory -and $inventory -isnot [array] -and $inventory.PSObject.Properties.Name -contains $wrapper) {
+                $inventory = $inventory.$wrapper
+            }
+        }
+        $existing = @($inventory | ForEach-Object { $_.name } | Where-Object { $_ })
         foreach ($s in $skills) {
             $md = Get-SkillMd -Name $s
             $file = Join-Path $tmpRoot "$s.md"
             [System.IO.File]::WriteAllText($file, $md)
-            Invoke-Azd -Args @('ai', 'skill', 'create', $s, '--file', $file, '--force', '-e', $EnvName) -What "skill create $s" | Out-Null
-            Write-Host "  [OK] skill $s"
+            # `create --force` would delete a skill that published toolboxes reference;
+            # `update` adds a new default version instead.
+            $verb = if ($s -cin $existing) { 'update' } else { 'create' }
+            Invoke-Azd -Args @('ai', 'skill', $verb, $s, '--file', $file, '-e', $EnvName) -What "skill $verb $s" | Out-Null
+            Write-Host "  [OK] skill $s ($verb)"
         }
     } finally {
         Remove-Item -Recurse -Force $tmpRoot -ErrorAction SilentlyContinue

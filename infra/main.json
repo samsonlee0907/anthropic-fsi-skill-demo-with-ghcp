@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "3935817586326439515"
+      "templateHash": "1271099545189351337"
     },
     "description": "FSI Multi-Agent Demo — subscription-scoped deployment: resource group + Foundry + supporting services + Container Apps."
   },
@@ -33,33 +33,61 @@
         "description": "Object ID of a user/group to also grant Foundry data-plane access (optional, for portal testing in ai.azure.com)."
       }
     },
-    "agentModelDeploymentName": {
+    "modelName": {
       "type": "string",
-      "defaultValue": "gpt-5.4",
+      "minLength": 1,
       "metadata": {
-        "description": "Model deployment name the hosted agents run on. MUST match one of the names in modelDeployments (below), or the agents will call a deployment that does not exist."
+        "description": "REQUIRED. Azure OpenAI catalog model name the hosted agents run on (suggested: gpt-6-astra; alternatives: gpt-6-sol, gpt-6-luna). Confirm availability in your region/subscription. There is intentionally no default."
+      }
+    },
+    "modelVersion": {
+      "type": "string",
+      "minLength": 1,
+      "metadata": {
+        "description": "REQUIRED. Exact catalog model version to provision (for example 2026-09-03 for gpt-6-astra, 2026-09-22 for gpt-6-sol or gpt-6-luna; confirm with az cognitiveservices model list)."
+      }
+    },
+    "modelSku": {
+      "type": "string",
+      "defaultValue": "GlobalStandard",
+      "metadata": {
+        "description": "Deployment SKU supported by the selected model and subscription."
       }
     },
     "modelCapacity": {
       "type": "int",
-      "defaultValue": 150,
+      "minValue": 1,
       "metadata": {
-        "description": "Capacity (thousands of tokens/min) for the default gpt-5.4 deployment. Lower it if you are quota-constrained -- gpt-5.4 GlobalStandard quota is subscription-GLOBAL (shared across every region), so switching region does NOT free quota. Ignored when modelDeployments is overridden directly."
+        "description": "REQUIRED. Capacity (thousands of tokens/min) for the model deployment. GlobalStandard quota is subscription-GLOBAL per model (shared across every region and resource group), so check free quota first; switching region does NOT free quota. Ignored when modelDeployments is overridden directly."
+      }
+    },
+    "agentModelDeploymentName": {
+      "type": "string",
+      "defaultValue": "[parameters('modelName')]",
+      "metadata": {
+        "description": "Model deployment name (alias) the hosted agents call. Defaults to modelName. MUST match one of the names in modelDeployments."
+      }
+    },
+    "demoStoragePolicyOptOut": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Explicit demo-only opt-out supported by the governing policy: SecurityControl=Ignore on the STORAGE ACCOUNT ONLY. May exempt other rules honoring that tag. Never enables anonymous blobs or shared keys."
       }
     },
     "modelDeployments": {
       "type": "array",
       "defaultValue": [
         {
-          "name": "gpt-5.4",
-          "model": "gpt-5.4",
-          "version": "2026-03-05",
-          "sku": "GlobalStandard",
+          "name": "[parameters('agentModelDeploymentName')]",
+          "model": "[parameters('modelName')]",
+          "version": "[parameters('modelVersion')]",
+          "sku": "[parameters('modelSku')]",
           "capacity": "[parameters('modelCapacity')]"
         }
       ],
       "metadata": {
-        "description": "Model deployments to create on the Foundry account. Override to add models or change capacity/region to fit your quota. Keep the agent model (agentModelDeploymentName) in this list."
+        "description": "Model deployments to create on the Foundry account. Defaults to a single deployment built from the model* parameters. Keep the agent model (agentModelDeploymentName) in this list."
       }
     }
   },
@@ -303,7 +331,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "5842820076003508184"
+              "templateHash": "15535680882571815727"
             },
             "description": "Microsoft Foundry account (AI Services) + project + serialized model deployments for the FSI multi-agent demo."
           },
@@ -326,17 +354,8 @@
             },
             "modelDeployments": {
               "type": "array",
-              "defaultValue": [
-                {
-                  "name": "gpt-5.4",
-                  "model": "gpt-5.4",
-                  "version": "2026-03-05",
-                  "sku": "GlobalStandard",
-                  "capacity": 150
-                }
-              ],
               "metadata": {
-                "description": "Model deployments to create on the account. Deployed one at a time to avoid concurrent-write conflicts."
+                "description": "Model deployments to create on the account (supplied by main.bicep; no default model). Deployed one at a time to avoid concurrent-write conflicts."
               }
             }
           },
@@ -567,6 +586,7 @@
           "storageAccountName": {
             "value": "[format('st{0}', variables('shortToken'))]"
           },
+          "governanceTags": "[if(parameters('demoStoragePolicyOptOut'), createObject('value', createObject('SecurityControl', 'Ignore')), createObject('value', createObject()))]",
           "principalIds": {
             "value": [
               "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'identity'), '2025-04-01').outputs.principalId.value]",
@@ -581,7 +601,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "4057747674955891141"
+              "templateHash": "3150271209999023409"
             },
             "description": "Storage account with blob containers for generated artifacts."
           },
@@ -598,6 +618,13 @@
             "principalIds": {
               "type": "array",
               "defaultValue": []
+            },
+            "governanceTags": {
+              "type": "object",
+              "defaultValue": {},
+              "metadata": {
+                "description": "Explicitly approved governance tags for this storage account only; not propagated to its resource group or other resources."
+              }
             }
           },
           "resources": [
@@ -606,7 +633,7 @@
               "apiVersion": "2023-05-01",
               "name": "[parameters('storageAccountName')]",
               "location": "[parameters('location')]",
-              "tags": "[parameters('tags')]",
+              "tags": "[union(parameters('tags'), parameters('governanceTags'))]",
               "sku": {
                 "name": "Standard_LRS"
               },
@@ -716,7 +743,7 @@
             "value": "[variables('tags')]"
           },
           "keyVaultName": {
-            "value": "[format('kv-{0}-{1}', parameters('environmentName'), variables('shortToken'))]"
+            "value": "[format('kv-{0}-{1}', take(parameters('environmentName'), 12), variables('shortToken'))]"
           },
           "principalIds": {
             "value": [
@@ -1004,6 +1031,14 @@
               {
                 "name": "ARTIFACTS_CONTAINER",
                 "value": "artifacts"
+              },
+              {
+                "name": "AZURE_AI_MODEL_DEPLOYMENT_NAME",
+                "value": "[parameters('agentModelDeploymentName')]"
+              },
+              {
+                "name": "FSI_ENVIRONMENT_NAME",
+                "value": "[parameters('environmentName')]"
               },
               {
                 "name": "AZURE_CLIENT_ID",

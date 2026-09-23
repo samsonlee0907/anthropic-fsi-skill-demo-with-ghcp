@@ -38,6 +38,10 @@ STORAGE_BLOB_ENDPOINT = _require_env(
 ).rstrip("/")
 ARTIFACTS_CONTAINER = os.environ.get("ARTIFACTS_CONTAINER", "artifacts")
 
+# Public deployment labels, not runtime/model-readiness checks.
+ENVIRONMENT_NAME = os.environ.get("FSI_ENVIRONMENT_NAME", "").strip() or None
+MODEL_DEPLOYMENT_NAME = os.environ.get("AZURE_AI_MODEL_DEPLOYMENT_NAME", "").strip() or None
+
 # Scenario key -> deployed hosted-agent name. Names are unversioned so the same
 # config serves every environment (each environment is its own Foundry project).
 AGENT_NAMES = {
@@ -60,8 +64,9 @@ DISCLAIMER = (
 
 # Each scenario is served by ONE deployed Microsoft Agent Framework HOSTED agent that
 # natively loads its bound Anthropic skills (load_skill progressive disclosure over the
-# scenario toolbox MCP) and uses Foundry-native code_interpreter/web_search plus SEC
-# EDGAR public-filing tools backed by the open-source sec-edgar-mcp package. Every
+# scenario toolbox MCP), runs web search and SEC EDGAR public-filing tools (backed by the
+# open-source sec-edgar-mcp package) through that toolbox, and builds artifacts with the
+# native code_interpreter. Every
 # scenario analyses a REAL public company: the agent sources its numbers live from SEC
 # EDGAR filings and web search (no bundled dataset), then models them in code_interpreter.
 SCENARIOS = {

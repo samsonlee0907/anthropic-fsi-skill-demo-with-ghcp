@@ -83,6 +83,7 @@ if (-not $exists) {
         --registry-identity $UserAssignedIdentityId `
         --user-assigned $UserAssignedIdentityId `
         --env-vars $envArgs | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Creating SEC EDGAR Container App $AppName failed." }
 } else {
     Write-Host "Updating Container App $AppName ..."
     az containerapp update `
@@ -91,9 +92,23 @@ if (-not $exists) {
         --image $image `
         --set-env-vars $envArgs `
         --revision-suffix ("v" + (Get-Date -Format 'MMddHHmmss')) | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Updating SEC EDGAR Container App $AppName failed." }
 }
 
 $fqdn = az containerapp show -g $ResourceGroup -n $AppName --query "properties.configuration.ingress.fqdn" -o tsv
+if ($LASTEXITCODE -ne 0 -or -not $fqdn) { throw "Could not resolve SEC EDGAR ingress for $AppName." }
+$ready = $false
+for ($attempt = 1; $attempt -le 12; $attempt++) {
+    try {
+        $health = Invoke-WebRequest -Uri "https://$fqdn/healthz" -UseBasicParsing -TimeoutSec 10
+        if ($health.StatusCode -eq 200 -and $health.Content.Trim() -eq 'ok') { $ready = $true; break }
+        Write-Warning "SEC EDGAR liveness returned unexpected content (attempt $attempt/12)."
+    } catch {
+        Write-Warning "SEC EDGAR liveness request failed (attempt $attempt/12): $($_.Exception.Message)"
+    }
+    Start-Sleep -Seconds 5
+}
+if (-not $ready) { throw "SEC EDGAR is not healthy; inspect Container App console logs before registering its connection." }
 $mcpUrl = "https://$fqdn/mcp"
 Write-Host "SEC EDGAR MCP deployed: $mcpUrl"
 return $mcpUrl
